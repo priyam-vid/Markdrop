@@ -710,16 +710,43 @@ private fun SplitPaneWorkspace(
         withContext(Dispatchers.IO) {
             try {
                 val uri = android.net.Uri.parse(pdfUri)
-                val renderer = com.markdrop.app.conversion.pdf.PdfPageRenderer(context, uri)
-                if (currentPage in 0 until renderer.pageCount) {
-                    val bmp = renderer.renderPageToBitmap(currentPage, scaleFactor = 1.8f)
-                    withContext(Dispatchers.Main) {
-                        pageBitmap?.recycle()
-                        pageBitmap = bmp
+                val type = context.contentResolver.getType(uri) ?: ""
+                val isImage = type.startsWith("image/") || pdfUri.endsWith(".png", true) || pdfUri.endsWith(".jpg", true) || pdfUri.endsWith(".jpeg", true)
+                if (isImage) {
+                    val bmp = context.contentResolver.openInputStream(uri)?.use { stream ->
+                        android.graphics.BitmapFactory.decodeStream(stream)
                     }
+                    if (bmp != null) {
+                        withContext(Dispatchers.Main) {
+                            pageBitmap?.recycle()
+                            pageBitmap = bmp
+                        }
+                    }
+                } else {
+                    val renderer = com.markdrop.app.conversion.pdf.PdfPageRenderer(context, uri)
+                    if (currentPage in 0 until renderer.pageCount) {
+                        val bmp = renderer.renderPageToBitmap(currentPage, scaleFactor = 1.8f)
+                        withContext(Dispatchers.Main) {
+                            pageBitmap?.recycle()
+                            pageBitmap = bmp
+                        }
+                    }
+                    renderer.close()
                 }
-                renderer.close()
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+                try {
+                    val uri = android.net.Uri.parse(pdfUri)
+                    val bmp = context.contentResolver.openInputStream(uri)?.use { stream ->
+                        android.graphics.BitmapFactory.decodeStream(stream)
+                    }
+                    if (bmp != null) {
+                        withContext(Dispatchers.Main) {
+                            pageBitmap?.recycle()
+                            pageBitmap = bmp
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
         }
     }
 

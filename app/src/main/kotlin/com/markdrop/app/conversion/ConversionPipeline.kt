@@ -2,6 +2,8 @@ package com.markdrop.app.conversion
 
 import android.content.Context
 import android.net.Uri
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import com.markdrop.app.conversion.assemble.Assembler
 import com.markdrop.app.conversion.cloud.CloudVisionClient
 import com.markdrop.app.conversion.layout.LayoutPage
@@ -44,7 +46,20 @@ class ConversionPipeline(
             ?: throw IllegalArgumentException("Job with ID $jobId not found")
 
         val pdfUri = Uri.parse(job.pdfUri)
-        val pdfRenderer = PdfPageRenderer(context, pdfUri)
+        val mimeType = context.contentResolver.getType(pdfUri) ?: ""
+        val isImage = mimeType.startsWith("image/") ||
+                job.fileName.endsWith(".png", true) ||
+                job.fileName.endsWith(".jpg", true) ||
+                job.fileName.endsWith(".jpeg", true) ||
+                job.fileName.endsWith(".webp", true)
+
+        val pdfRenderer = if (!isImage) {
+            try {
+                PdfPageRenderer(context, pdfUri)
+            } catch (_: Exception) {
+                null
+            }
+        } else null
         val ocrEngine = MlKitOcrEngine()
 
         val isAiMode = job.mode.isAi
@@ -63,7 +78,7 @@ class ConversionPipeline(
         try {
             db.conversionDao().updateStatus(jobId, ConversionStatus.PROCESSING)
 
-            val totalPdfPages = pdfRenderer.pageCount
+            val totalPdfPages = pdfRenderer?.pageCount ?: 1
             val pagesToProcess = (0 until totalPdfPages).toList()
             val totalPages = pagesToProcess.size
 
@@ -91,62 +106,77 @@ class ConversionPipeline(
 
                 try {
                     // Step 1: Check for usable embedded text layer (born-digital PDFs)
-                    val textLines = TextLayerExtractor.extractPageTextLayer(context, pdfUri, pageIndex)
+                    val textLines = if (pdfRenderer != null) {
+                        TextLayerExtractor.extractPageTextLayer(context, pdfUri, pageIndex)
+                    } else null
+
                     if (textLines != null) {
                         onProgress(progressIndex + 1, totalPages, "Extracting page ${progressIndex + 1} of $totalPages (text layer)...")
                         pageMarkdown = LayoutToMarkdown.formatPage(
                             LayoutPage(pageIndex, 0f, 0f, textLines)
                         )
                         engineUsed = "TEXT_LAYER"
-                    } else if (isAiMode && (cloudClient != null || localLlm != null)) {
-                        // Step 2: AI mode rasterization + Vision LLM
-                        onProgress(progressIndex + 1, totalPages, "Transcribing page ${progressIndex + 1} of $totalPages via AI...")
-                        val bitmap = pdfRenderer.renderPageToBitmap(pageIndex, targetDpi = 200, isOcrMode = false)
-                        try {
-                            if (cloudClient != null) {
-                                val provider = secureKeyStore.getSelectedProvider()
-                                val apiKey = secureKeyStore.getApiKey(provider) ?: ""
-                                val model = secureKeyStore.getSelectedModel(provider)
-                                pageMarkdown = cloudClient.transcribePage(
-                                    bitmap = bitmap,
-                                    provider = provider,
-                                    apiKey = apiKey,
-                                    model = model,
-                                    pageNumber = progressIndex + 1,
-                                    totalPages = totalPages,
-                                    previousTail = lastCompletedMarkdown?.takeLast(400)
-                                )
-                                engineUsed = "VISION_AI_CLOUD ($model)"
-                            } else if (localLlm != null) {
-                                pageMarkdown = localLlm.transcribePage(
-                                    bitmap = bitmap,
-                                    pageNumber = progressIndex + 1,
-                                    totalPages = totalPages,
-                                    previousTail = lastCompletedMarkdown?.takeLast(400)
-                                )
-                                engineUsed = "VISION_AI_LOCAL (${manifest.displayName})"
-                            }
-                        } catch (e: Exception) {
-                            if (e is CancellationException) throw e
-                            // Per brief 3.1: Fall back to Offline for that page and flag it in the final document; do not fail the job!
-                            onProgress(progressIndex + 1, totalPages, "AI error on page ${progressIndex + 1}, falling back to OCR...")
-                            val ocrResult = ocrEngine.processImage(bitmap, pageIndex)
-                            val ocrMd = LayoutToMarkdown.formatOcr(ocrResult)
-                            pageMarkdown = "> [!NOTE] Transcribed via on-device OCR fallback (AI error: ${e.message?.take(80)})\n\n$ocrMd"
-                            engineUsed = "FALLBACK_OCR"
-                        } finally {
-                            bitmap.recycle()
-                        }
                     } else {
-                        // Step 3: Offline mode rasterization + ML Kit OCR -> LayoutToMarkdown
-                        onProgress(progressIndex + 1, totalPages, "Extracting page ${progressIndex + 1} of $totalPages (OCR)...")
-                        val bitmap = pdfRenderer.renderPageToBitmap(pageIndex, targetDpi = 200, isOcrMode = true)
-                        try {
-                            val ocrResult = ocrEngine.processImage(bitmap, pageIndex)
-                            pageMarkdown = LayoutToMarkdown.formatOcr(ocrResult)
-                            engineUsed = "OFFLINE_OCR"
-                        } finally {
-                            bitmap.recycle()
+                        suspend fun loadBitmap(isOcr: Boolean): Bitmap {
+                            return if (pdfRenderer != null) {
+                                pdfRenderer.renderPageToBitmap(pageIndex, targetDpi = 200, isOcrMode = isOcr)
+                            } else {
+                                context.contentResolver.openInputStream(pdfUri)?.use { stream ->
+                                    BitmapFactory.decodeStream(stream)
+                                } ?: throw IllegalStateException("Could not load image from $pdfUri")
+                            }
+                        }
+
+                        if (isAiMode && (cloudClient != null || localLlm != null)) {
+                            // Step 2: AI mode rasterization + Vision LLM
+                            onProgress(progressIndex + 1, totalPages, "Transcribing page ${progressIndex + 1} of $totalPages via AI...")
+                            val bitmap = loadBitmap(isOcr = false)
+                            try {
+                                if (cloudClient != null) {
+                                    val provider = secureKeyStore.getSelectedProvider()
+                                    val apiKey = secureKeyStore.getApiKey(provider) ?: ""
+                                    val model = secureKeyStore.getSelectedModel(provider)
+                                    pageMarkdown = cloudClient.transcribePage(
+                                        bitmap = bitmap,
+                                        provider = provider,
+                                        apiKey = apiKey,
+                                        model = model,
+                                        pageNumber = progressIndex + 1,
+                                        totalPages = totalPages,
+                                        previousTail = lastCompletedMarkdown?.takeLast(400)
+                                    )
+                                    engineUsed = "VISION_AI_CLOUD ($model)"
+                                } else if (localLlm != null) {
+                                    pageMarkdown = localLlm.transcribePage(
+                                        bitmap = bitmap,
+                                        pageNumber = progressIndex + 1,
+                                        totalPages = totalPages,
+                                        previousTail = lastCompletedMarkdown?.takeLast(400)
+                                    )
+                                    engineUsed = "VISION_AI_LOCAL (${manifest.displayName})"
+                                }
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
+                                // Per brief 3.1: Fall back to Offline for that page and flag it in the final document; do not fail the job!
+                                onProgress(progressIndex + 1, totalPages, "AI error on page ${progressIndex + 1}, falling back to OCR...")
+                                val ocrResult = ocrEngine.processImage(bitmap, pageIndex)
+                                val ocrMd = LayoutToMarkdown.formatOcr(ocrResult)
+                                pageMarkdown = "> [!NOTE] Transcribed via on-device OCR fallback (AI error: ${e.message?.take(80)})\n\n$ocrMd"
+                                engineUsed = "FALLBACK_OCR"
+                            } finally {
+                                bitmap.recycle()
+                            }
+                        } else {
+                            // Step 3: Offline mode rasterization + ML Kit OCR -> LayoutToMarkdown
+                            onProgress(progressIndex + 1, totalPages, "Extracting page ${progressIndex + 1} of $totalPages (OCR)...")
+                            val bitmap = loadBitmap(isOcr = true)
+                            try {
+                                val ocrResult = ocrEngine.processImage(bitmap, pageIndex)
+                                pageMarkdown = LayoutToMarkdown.formatOcr(ocrResult)
+                                engineUsed = "OFFLINE_OCR"
+                            } finally {
+                                bitmap.recycle()
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -209,7 +239,7 @@ class ConversionPipeline(
                 mode = job.mode
             )
         } finally {
-            pdfRenderer.close()
+            pdfRenderer?.close()
             ocrEngine.close()
             cloudClient?.close()
             localLlm?.close()

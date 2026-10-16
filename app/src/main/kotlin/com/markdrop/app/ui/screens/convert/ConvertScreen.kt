@@ -72,6 +72,33 @@ fun ConvertScreen(
         }
     }
 
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            HapticHelper.performHaptic(view, HapticType.LIGHT, true)
+            viewModel.selectPdf(uri)
+        }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        if (bitmap != null) {
+            try {
+                val tempFile = java.io.File(context.cacheDir, "camera_scan_${System.currentTimeMillis()}.jpg")
+                java.io.FileOutputStream(tempFile).use { out ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
+                }
+                val uri = Uri.fromFile(tempFile)
+                HapticHelper.performHaptic(view, HapticType.LIGHT, true)
+                viewModel.selectPdf(uri)
+            } catch (e: Exception) {
+                Toast.makeText(context, "Failed to capture image: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     if (showPageRangeDialog && uiState.selectedPdf != null) {
         PageRangeSelectorDialog(
             pdfUri = uiState.selectedPdf!!.uri,
@@ -116,19 +143,27 @@ fun ConvertScreen(
         ) {
             // Header tagline
             Text(
-                text = "Drop a PDF in, get clean Markdown out.",
+                text = "Drop a PDF or image in, get clean Markdown out.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 4.dp)
             )
 
-            // PDF Picker / Document Card
+            // PDF / Image Picker / Document Card
             if (uiState.selectedPdf == null) {
                 PdfDropArea(
-                    onClick = {
+                    onPickPdf = {
                         HapticHelper.performHaptic(view, HapticType.LIGHT, true)
                         filePickerLauncher.launch(arrayOf("application/pdf"))
+                    },
+                    onPickImage = {
+                        HapticHelper.performHaptic(view, HapticType.LIGHT, true)
+                        imagePickerLauncher.launch("image/*")
+                    },
+                    onTakePhoto = {
+                        HapticHelper.performHaptic(view, HapticType.LIGHT, true)
+                        cameraLauncher.launch(null)
                     }
                 )
             } else {
@@ -141,7 +176,7 @@ fun ConvertScreen(
                     },
                     onChangeFile = {
                         HapticHelper.performHaptic(view, HapticType.LIGHT, true)
-                        filePickerLauncher.launch(arrayOf("application/pdf"))
+                        filePickerLauncher.launch(arrayOf("application/pdf", "image/*"))
                     }
                 )
             }
@@ -372,45 +407,80 @@ fun ConvertScreen(
 
 @Composable
 private fun PdfDropArea(
-    onClick: () -> Unit,
+    onPickPdf: () -> Unit,
+    onPickImage: () -> Unit,
+    onTakePhoto: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .height(180.dp)
             .clip(RoundedCornerShape(24.dp))
             .border(
                 width = 2.dp,
                 color = MaterialTheme.colorScheme.outlineVariant,
                 shape = RoundedCornerShape(24.dp)
-            )
-            .clickable(onClick = onClick),
+            ),
         color = MaterialTheme.colorScheme.surfaceContainerLowest
     ) {
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
             Icon(
                 imageVector = Icons.Rounded.UploadFile,
                 contentDescription = null,
-                modifier = Modifier.size(54.dp),
+                modifier = Modifier.size(48.dp),
                 tint = MaterialTheme.colorScheme.primary
             )
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Select a PDF file",
+                text = "Drop a PDF or image to convert",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Tap to browse your device",
+                text = "Convert PDFs, scanned pages, or camera photos into Markdown",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onPickPdf,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("PDF", maxLines = 1)
+                }
+                OutlinedButton(
+                    onClick = onPickImage,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Rounded.Image, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Image", maxLines = 1)
+                }
+                OutlinedButton(
+                    onClick = onTakePhoto,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Rounded.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Camera", maxLines = 1)
+                }
+            }
         }
     }
 }
@@ -423,6 +493,11 @@ private fun PdfInfoCard(
     onChangeFile: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val isImage = pdfInfo.name.endsWith(".png", true) ||
+            pdfInfo.name.endsWith(".jpg", true) ||
+            pdfInfo.name.endsWith(".jpeg", true) ||
+            pdfInfo.name.endsWith(".webp", true)
+
     OutlinedCard(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -447,7 +522,7 @@ private fun PdfInfoCard(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Rounded.PictureAsPdf,
+                            imageVector = if (isImage) Icons.Rounded.Image else Icons.Rounded.PictureAsPdf,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier.size(28.dp)
@@ -466,7 +541,7 @@ private fun PdfInfoCard(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "${pdfInfo.pageCount} pages total • ${formatFileSize(pdfInfo.sizeBytes)}",
+                        text = if (isImage) "Image Document • ${formatFileSize(pdfInfo.sizeBytes)}" else "${pdfInfo.pageCount} pages total • ${formatFileSize(pdfInfo.sizeBytes)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -477,34 +552,36 @@ private fun PdfInfoCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            if (!isImage && pdfInfo.pageCount > 1) {
+                Spacer(modifier = Modifier.height(10.dp))
 
-            // Page range selection chip row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "Selected Pages:",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                AssistChip(
-                    onClick = onEditPages,
-                    label = { Text("$selectedPagesCount of ${pdfInfo.pageCount} Pages") },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Rounded.FilterList,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    },
-                    colors = AssistChipDefaults.assistChipColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                        labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                // Page range selection chip row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Selected Pages:",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                )
+                    AssistChip(
+                        onClick = onEditPages,
+                        label = { Text("$selectedPagesCount of ${pdfInfo.pageCount} Pages") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Rounded.FilterList,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                            labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    )
+                }
             }
         }
     }

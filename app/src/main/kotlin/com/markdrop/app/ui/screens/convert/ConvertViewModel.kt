@@ -220,9 +220,25 @@ class ConvertViewModel(
             }
         }
 
-        val renderer = PdfPageRenderer(context, uri)
-        val pages = renderer.pageCount
-        renderer.close()
+        val type = context.contentResolver.getType(uri) ?: ""
+        val isImage = type.startsWith("image/") ||
+                name.endsWith(".png", true) ||
+                name.endsWith(".jpg", true) ||
+                name.endsWith(".jpeg", true) ||
+                name.endsWith(".webp", true)
+
+        val pages = if (isImage) {
+            1
+        } else {
+            try {
+                val renderer = PdfPageRenderer(context, uri)
+                val count = renderer.pageCount
+                renderer.close()
+                count
+            } catch (_: Exception) {
+                1
+            }
+        }
 
         return SelectedPdfInfo(
             uri = uri,
