@@ -33,7 +33,7 @@ object LayoutToMarkdown {
         }
 
         val bodyModeSize = computeBodyModeSize(lines)
-        val blocks = XYCut.segment(lines, page.width.coerceAtLeast(300f), page.height.coerceAtLeast(400f))
+        val blocks = extractBlocksWithTables(lines, page.width.coerceAtLeast(300f), page.height.coerceAtLeast(400f))
 
         val sb = StringBuilder()
 
@@ -68,6 +68,23 @@ object LayoutToMarkdown {
         }
 
         return sb.toString().trim()
+    }
+
+    private fun extractBlocksWithTables(lines: List<LayoutLine>, pageWidth: Float, pageHeight: Float): List<LayoutBlock> {
+        val table = TableDetector.findTable(lines) ?: return XYCut.segment(lines, pageWidth, pageHeight)
+
+        val result = mutableListOf<LayoutBlock>()
+        if (table.startIndex > 0) {
+            val beforeLines = lines.subList(0, table.startIndex)
+            result.addAll(extractBlocksWithTables(beforeLines, pageWidth, pageHeight))
+        }
+        val tableLines = lines.subList(table.startIndex, table.endIndex)
+        result.add(LayoutBlock(tableLines))
+        if (table.endIndex < lines.size) {
+            val afterLines = lines.subList(table.endIndex, lines.size)
+            result.addAll(extractBlocksWithTables(afterLines, pageWidth, pageHeight))
+        }
+        return result
     }
 
     /**
@@ -187,47 +204,25 @@ object LayoutToMarkdown {
             }
         }
 
-        // Check for Lists
-        val listItems = mutableListOf<String>()
-        var inList = false
-
-        for (line in lines) {
-            val raw = line.text.trim()
-            val bulletMatch = EXTENDED_BULLET_REGEX.matchEntire(raw)
-            val numberedMatch = NUMBERED_LIST_REGEX.matchEntire(raw)
-
-            when {
-                bulletMatch != null -> {
-                    val content = formatWordsInline(line.words.drop(1))
-                    val finalContent = if (content.isNotBlank()) content else bulletMatch.groupValues[2]
-                    listItems.add("- $finalContent")
-                    inList = true
-                }
-                numberedMatch != null -> {
-                    val num = numberedMatch.groupValues[1]
-                    val content = formatWordsInline(line.words.drop(1))
-                    val finalContent = if (content.isNotBlank()) content else numberedMatch.groupValues[2]
-                    val prefix = if (num.endsWith(".") || num.endsWith(")")) num else "$num."
-                    listItems.add("$prefix $finalContent")
-                    inList = true
-                }
-                inList -> {
-                    val lastIdx = listItems.lastIndex
-                    if (lastIdx >= 0 && (line.left > lines.first().left + 10f || raw.length < 80)) {
-                        listItems[lastIdx] = listItems[lastIdx] + " " + formatWordsInline(line.words)
-                    } else {
-                        inList = false
-                        listItems.add(formatWordsInline(line.words))
-                    }
-                }
-                else -> {
-                    listItems.add(formatWordsInline(line.words))
-                }
+        // Check for Tables
+        val table = TableDetector.findTable(lines)
+        if (table != null) {
+            val sb = StringBuilder()
+            if (table.startIndex > 0) {
+                val before = formatBlock(lines.subList(0, table.startIndex), bodySize)
+                if (before.isNotBlank()) sb.append(before).append("\n\n")
             }
+            sb.append(table.markdown)
+            if (table.endIndex < lines.size) {
+                val after = formatBlock(lines.subList(table.endIndex, lines.size), bodySize)
+                if (after.isNotBlank()) sb.append("\n\n").append(after)
+            }
+            return sb.toString().trim()
         }
 
-        if (inList || listItems.any { it.startsWith("- ") || it.matches(Regex("""^\d+.*\s.*""")) }) {
-            return listItems.joinToString("\n")
+        // Check for Lists
+        if (ListDetector.isListCandidate(lines)) {
+            return ListDetector.formatList(lines) { formatWordsInline(it) }
         }
 
         // Reconstruct coherent paragraph with word-level styles and dehyphenation

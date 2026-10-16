@@ -24,17 +24,7 @@ object XYCut {
         // 1. If there is a complete vertical gutter with 0 spanning lines (pure columns), cut vertically immediately
         if (verticalGutters.isNotEmpty()) {
             val gutter = verticalGutters.first()
-            val leftCol = mutableListOf<LayoutLine>()
-            val rightCol = mutableListOf<LayoutLine>()
-            val spanningLines = mutableListOf<LayoutLine>()
-
-            for (line in lines) {
-                when {
-                    line.right <= gutter.start -> leftCol.add(line)
-                    line.left >= gutter.end -> rightCol.add(line)
-                    else -> spanningLines.add(line)
-                }
-            }
+            val (leftCol, rightCol, spanningLines) = partitionLines(lines, gutter)
 
             if (leftCol.isNotEmpty() && rightCol.isNotEmpty() && spanningLines.isEmpty()) {
                 return recursiveCut(leftCol, depth + 1) + recursiveCut(rightCol, depth + 1)
@@ -52,17 +42,7 @@ object XYCut {
         // 3. Check for vertical white-space gutters across lines with spanning lines
         if (verticalGutters.isNotEmpty()) {
             val gutter = verticalGutters.first()
-            val leftCol = mutableListOf<LayoutLine>()
-            val rightCol = mutableListOf<LayoutLine>()
-            val spanningLines = mutableListOf<LayoutLine>()
-
-            for (line in lines) {
-                when {
-                    line.right <= gutter.start -> leftCol.add(line)
-                    line.left >= gutter.end -> rightCol.add(line)
-                    else -> spanningLines.add(line)
-                }
-            }
+            val (leftCol, rightCol, spanningLines) = partitionLines(lines, gutter)
 
             // If we found a clean column separation
             if (leftCol.isNotEmpty() && rightCol.isNotEmpty() && (leftCol.size + rightCol.size) >= (lines.size * 0.6)) {
@@ -79,6 +59,32 @@ object XYCut {
         }
 
         return listOf(LayoutBlock(lines))
+    }
+
+    private fun partitionLines(
+        lines: List<LayoutLine>,
+        gutter: Gutter
+    ): Triple<List<LayoutLine>, List<LayoutLine>, List<LayoutLine>> {
+        val leftCol = mutableListOf<LayoutLine>()
+        val rightCol = mutableListOf<LayoutLine>()
+        val spanning = mutableListOf<LayoutLine>()
+
+        for (line in lines) {
+            val leftWords = line.words.filter { it.right <= gutter.start }
+            val rightWords = line.words.filter { it.left >= gutter.end }
+            val spanningWords = line.words.filter { it !in leftWords && it !in rightWords }
+
+            when {
+                leftWords.isNotEmpty() && rightWords.isNotEmpty() && spanningWords.isEmpty() -> {
+                    leftCol.add(LayoutLine(words = leftWords, y = line.y, height = line.height, fontSize = line.fontSize))
+                    rightCol.add(LayoutLine(words = rightWords, y = line.y, height = line.height, fontSize = line.fontSize))
+                }
+                line.right <= gutter.start -> leftCol.add(line)
+                line.left >= gutter.end -> rightCol.add(line)
+                else -> spanning.add(line)
+            }
+        }
+        return Triple(leftCol, rightCol, spanning)
     }
 
     private fun findHorizontalCut(lines: List<LayoutLine>, bodyMode: Float): Int {
@@ -103,22 +109,24 @@ object XYCut {
     }
 
     private fun findVerticalGutters(lines: List<LayoutLine>, bodyMode: Float): List<Gutter> {
-        val minGutterWidth = (bodyMode * 0.9f).coerceAtLeast(10f)
+        val minGutterWidth = (bodyMode * 1.5f).coerceAtLeast(20f)
         val leftBound = lines.minOf { it.left }
         val rightBound = lines.maxOf { it.right }
         val width = rightBound - leftBound
         if (width < 100f) return emptyList()
 
-        // Histogram of horizontal coverage in 2-point bins
+        // Histogram of horizontal coverage in 2-point bins using actual word boundaries
         val binSize = 2.0f
         val numBins = ((rightBound - leftBound) / binSize).toInt() + 1
         val coverage = IntArray(numBins)
 
         for (line in lines) {
-            val startBin = ((line.left - leftBound) / binSize).toInt().coerceIn(0, numBins - 1)
-            val endBin = ((line.right - leftBound) / binSize).toInt().coerceIn(0, numBins - 1)
-            for (b in startBin..endBin) {
-                coverage[b]++
+            for (word in line.words) {
+                val startBin = ((word.left - leftBound) / binSize).toInt().coerceIn(0, numBins - 1)
+                val endBin = ((word.right - leftBound) / binSize).toInt().coerceIn(0, numBins - 1)
+                for (b in startBin..endBin) {
+                    coverage[b]++
+                }
             }
         }
 
