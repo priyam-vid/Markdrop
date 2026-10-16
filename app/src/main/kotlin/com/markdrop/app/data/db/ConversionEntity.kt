@@ -21,5 +21,6 @@ data class ConversionEntity(
     val createdAt: Long = System.currentTimeMillis(),
     val completedAt: Long? = null,
     val fileSizeBytes: Long = 0L,
-    val durationMs: Long = 0L
+    val durationMs: Long = 0L,
+    val selectedPages: String? = null
 )

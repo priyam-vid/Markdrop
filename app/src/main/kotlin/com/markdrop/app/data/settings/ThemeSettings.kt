@@ -31,4 +31,6 @@ data class ConversionSettings(
     val advancedModeEnabled: Boolean = false,
     val advancedModeExplainerShown: Boolean = false,
     val stripHeaderFooterEnabled: Boolean = true,
+    val aiUseEmbeddedTextLayer: Boolean = false,
+    val aiSource: String = "AUTO" // AUTO, CLOUD, LOCAL
 )

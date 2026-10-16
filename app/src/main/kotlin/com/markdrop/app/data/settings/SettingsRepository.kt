@@ -31,6 +31,8 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         val STRIP_HEADER_FOOTER_ENABLED = booleanPreferencesKey("strip_header_footer_enabled")
         val CACHED_REMOTE_MODEL_REGISTRY = stringPreferencesKey("cached_remote_model_registry")
         val SAVE_DIAGNOSTICS_ENABLED = booleanPreferencesKey("save_diagnostics_enabled")
+        val AI_USE_EMBEDDED_TEXT_LAYER = booleanPreferencesKey("ai_use_embedded_text_layer")
+        val AI_SOURCE = stringPreferencesKey("ai_source")
     }
 
     val themeSettingsFlow: Flow<ThemeSettings> = dataStore.data.map { preferences ->
@@ -79,7 +81,9 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
             customModelDownloadUrl = preferences[Keys.CUSTOM_MODEL_DOWNLOAD_URL],
             advancedModeEnabled = preferences[Keys.ADVANCED_MODE_ENABLED] ?: false,
             advancedModeExplainerShown = preferences[Keys.ADVANCED_MODE_EXPLAINER_SHOWN] ?: false,
-            stripHeaderFooterEnabled = preferences[Keys.STRIP_HEADER_FOOTER_ENABLED] ?: true
+            stripHeaderFooterEnabled = preferences[Keys.STRIP_HEADER_FOOTER_ENABLED] ?: true,
+            aiUseEmbeddedTextLayer = preferences[Keys.AI_USE_EMBEDDED_TEXT_LAYER] ?: false,
+            aiSource = preferences[Keys.AI_SOURCE] ?: "AUTO"
         )
     }
 
@@ -193,5 +197,13 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
     suspend fun setCachedModelsTimestamp(providerName: String, timestamp: Long) {
         val key = longPreferencesKey("cached_models_timestamp_${providerName.lowercase()}")
         dataStore.edit { prefs -> prefs[key] = timestamp }
+    }
+
+    suspend fun setAiUseEmbeddedTextLayer(enabled: Boolean) {
+        dataStore.edit { preferences -> preferences[Keys.AI_USE_EMBEDDED_TEXT_LAYER] = enabled }
+    }
+
+    suspend fun setAiSource(aiSource: String) {
+        dataStore.edit { preferences -> preferences[Keys.AI_SOURCE] = aiSource }
     }
 }

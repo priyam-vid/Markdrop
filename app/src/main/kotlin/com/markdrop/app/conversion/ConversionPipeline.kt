@@ -3,7 +3,8 @@ package com.markdrop.app.conversion
 import android.content.Context
 import android.net.Uri
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import com.markdrop.app.conversion.image.ImageLoader
+import com.markdrop.app.conversion.pdf.PageSelectionParser
 import com.markdrop.app.conversion.assemble.Assembler
 import com.markdrop.app.conversion.cloud.CloudVisionClient
 import com.markdrop.app.conversion.layout.LayoutPage
@@ -74,8 +75,23 @@ class ConversionPipeline(
         val manifest = DefaultModelManifest.getModelById(modelId) ?: DefaultModelManifest.DEFAULT
         val hasLocalAi = app.modelManager.isModelReady(manifest)
 
-        val cloudClient = if (isAiMode && hasCloudKey) CloudVisionClient() else null
-        val localLlm = if (isAiMode && !hasCloudKey && hasLocalAi) {
+        val aiSource = settings.aiSource // AUTO, CLOUD, LOCAL
+        val useCloud = isAiMode && (aiSource == "CLOUD" || (aiSource == "AUTO" && hasCloudKey))
+        val useLocal = isAiMode && !useCloud && (aiSource == "LOCAL" || (aiSource == "AUTO" && hasLocalAi))
+
+        if (isAiMode && !useCloud && !useLocal) {
+            val provider = secureKeyStore.getSelectedProvider()
+            if (aiSource == "CLOUD" || (!hasLocalAi && !hasCloudKey)) {
+                db.conversionDao().markFailed(jobId, "API key for ${provider.displayName} is missing. Please add your key in Settings.")
+                throw ApiKeyMissingException(provider.displayName)
+            } else if (aiSource == "LOCAL") {
+                db.conversionDao().markFailed(jobId, "Local AI model '${manifest.displayName}' is not ready. Please download it in Settings.")
+                throw ModelNotReadyException(manifest.displayName)
+            }
+        }
+
+        val cloudClient = if (useCloud) CloudVisionClient() else null
+        val localLlm = if (useLocal) {
             LocalLlmEngine(context, app.modelManager.getModelPath(manifest))
         } else null
 
@@ -84,11 +100,15 @@ class ConversionPipeline(
                 TextLayerSession.open(context, pdfUri)
             } catch (e: PdfOpenException) {
                 if (e.error == PdfOpenError.PASSWORD_REQUIRED) {
-                    db.conversionDao().updateStatus(jobId, ConversionStatus.FAILED)
-                    throw e
+                    db.conversionDao().markFailed(jobId, "PDF is password protected.")
+                    throw PdfEncryptedException()
+                } else if (e.error == PdfOpenError.CORRUPT) {
+                    db.conversionDao().markFailed(jobId, "PDF file is corrupted.")
+                    throw PdfCorruptException(cause = e)
                 }
                 null
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 null
             }
         } else null
@@ -97,7 +117,7 @@ class ConversionPipeline(
             db.conversionDao().updateStatus(jobId, ConversionStatus.PROCESSING)
 
             val totalPdfPages = pdfRenderer?.pageCount ?: 1
-            val pagesToProcess = (0 until totalPdfPages).toList()
+            val pagesToProcess = PageSelectionParser.parse(job.selectedPages, totalPdfPages)
             val totalPages = pagesToProcess.size
 
             // Resume capability: Fetch existing completed page results for this job
@@ -128,7 +148,9 @@ class ConversionPipeline(
                     val words = textSession?.extractWords(pageIndex)
                     val contentInfo = if (words != null) textSession.analyzePage(pageIndex, words) else null
 
-                    if (contentInfo?.isUsableTextLayer == true) {
+                    val bypassTextLayer = isAiMode && !settings.aiUseEmbeddedTextLayer
+
+                    if (!bypassTextLayer && contentInfo?.isUsableTextLayer == true) {
                         onProgress(progressIndex + 1, totalPages, "Extracting page ${progressIndex + 1} of $totalPages (text layer)...")
                         pageMarkdown = LayoutToMarkdown.formatPage(
                             LayoutPage(
@@ -143,11 +165,13 @@ class ConversionPipeline(
                     } else {
                         suspend fun loadBitmap(isOcr: Boolean): Bitmap {
                             return if (pdfRenderer != null) {
-                                pdfRenderer.renderPageToBitmap(pageIndex, targetDpi = 200, isOcrMode = isOcr)
+                                try {
+                                    pdfRenderer.renderPageToBitmap(pageIndex, targetDpi = 200, isOcrMode = isOcr)
+                                } catch (e: Exception) {
+                                    throw PageRenderException(pageIndex, cause = e)
+                                }
                             } else {
-                                context.contentResolver.openInputStream(pdfUri)?.use { stream ->
-                                    BitmapFactory.decodeStream(stream)
-                                } ?: throw IllegalStateException("Could not load image from $pdfUri")
+                                ImageLoader.loadImage(context, pdfUri, maxDimension = 2048)
                             }
                         }
 
