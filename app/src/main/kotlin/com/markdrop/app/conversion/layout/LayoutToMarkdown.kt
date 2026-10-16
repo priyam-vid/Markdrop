@@ -1,13 +1,13 @@
 package com.markdrop.app.conversion.layout
 
 import com.markdrop.app.conversion.ocr.OcrPageResult
-import java.util.regex.Pattern
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
  * Deterministic Layout-to-Markdown converter.
  * Pure Kotlin, zero Android framework dependencies.
+ * Uses LayoutWord as the atomic unit for styles, tables, and spatial reading order.
  */
 object LayoutToMarkdown {
 
@@ -20,12 +20,20 @@ object LayoutToMarkdown {
     }
 
     fun formatPage(page: LayoutPage): String {
-        val lines = page.lines.filter { it.text.isNotBlank() }
-        if (lines.isEmpty()) return ""
+        val lines = if (page.words.isNotEmpty()) {
+            LineClusterer.cluster(page.words)
+        } else {
+            page.lines
+        }.filter { it.text.isNotBlank() }
+
+        if (lines.isEmpty()) {
+            return if (page.figures.isNotEmpty()) {
+                "> **Figure:** (image on this page — not transcribed in Offline mode)"
+            } else ""
+        }
 
         val bodyModeSize = computeBodyModeSize(lines)
-        val sortedLines = sortLinesInReadingOrder(lines, page.width, bodyModeSize)
-        val blocks = groupLinesIntoBlocks(sortedLines, bodyModeSize)
+        val blocks = XYCut.segment(lines, page.width.coerceAtLeast(300f), page.height.coerceAtLeast(400f))
 
         val sb = StringBuilder()
 
@@ -33,13 +41,29 @@ object LayoutToMarkdown {
             sb.append("> [!WARNING] Low OCR confidence detected on this page (average ${((page.averageConfidence * 100).roundToInt())}%). Scanned handwriting or low-contrast text may have approximate transcription.\n\n")
         }
 
+        // Emit figures at top if above blocks
+        for (fig in page.figures) {
+            if (blocks.isNotEmpty() && fig.bottom <= blocks.first().top) {
+                sb.append("> **Figure:** (image on this page — not transcribed in Offline mode)\n\n")
+            }
+        }
+
         blocks.forEachIndexed { index, block ->
-            val formatted = formatBlock(block, bodyModeSize)
+            val formatted = formatBlock(block.lines, bodyModeSize)
             if (formatted.isNotBlank()) {
                 if (sb.isNotEmpty() && !sb.endsWith("\n\n")) {
                     sb.append("\n\n")
                 }
                 sb.append(formatted)
+
+                // Check for figures embedded within blocks
+                val blockBottom = block.bottom
+                val nextBlockTop = blocks.getOrNull(index + 1)?.top ?: Float.MAX_VALUE
+                for (fig in page.figures) {
+                    if (fig.top >= blockBottom - 20f && fig.bottom <= nextBlockTop + 20f) {
+                        sb.append("\n\n> **Figure:** (image on this page — not transcribed in Offline mode)\n\n")
+                    }
+                }
             }
         }
 
@@ -50,54 +74,52 @@ object LayoutToMarkdown {
      * Maps an ML Kit OcrPageResult into pure Kotlin LayoutPage.
      */
     fun fromOcrPageResult(ocr: OcrPageResult): LayoutPage {
-        val layoutLines = mutableListOf<LayoutLine>()
+        val layoutWords = mutableListOf<LayoutWord>()
         var totalConfidence = 0.0
         var confidenceCount = 0
 
         for (block in ocr.blocks) {
             for (line in block.lines) {
                 val box = line.boundingBox
-                val left = box?.left?.toFloat() ?: 0f
-                val right = box?.right?.toFloat() ?: 0f
                 val top = box?.top?.toFloat() ?: 0f
-                val bottom = box?.bottom?.toFloat() ?: 0f
-                val height = if (line.lineHeight > 0) line.lineHeight.toFloat() else (bottom - top).coerceAtLeast(16f)
+                val bottom = box?.bottom?.toFloat() ?: (top + 16f)
+                val height = (bottom - top).coerceAtLeast(14f)
 
-                val elements = line.elements.map { el ->
+                for (el in line.elements) {
                     val elBox = el.boundingBox
-                    if (el.confidence != null && el.confidence > 0f) {
-                        totalConfidence += el.confidence
+                    val elLeft = elBox?.left?.toFloat() ?: 0f
+                    val elRight = elBox?.right?.toFloat() ?: (elLeft + 20f)
+                    val elTop = elBox?.top?.toFloat() ?: top
+                    val elBottom = elBox?.bottom?.toFloat() ?: bottom
+                    val conf = el.confidence
+                    if (conf != null && conf > 0f) {
+                        totalConfidence += conf
                         confidenceCount++
                     }
-                    LayoutElement(
-                        text = el.text,
-                        left = elBox?.left?.toFloat() ?: 0f,
-                        right = elBox?.right?.toFloat() ?: 0f,
-                        confidence = el.confidence
+                    layoutWords.add(
+                        LayoutWord(
+                            text = el.text,
+                            left = elLeft,
+                            top = elTop,
+                            right = elRight,
+                            bottom = elBottom,
+                            fontSize = height,
+                            confidence = conf
+                        )
                     )
                 }
-
-                layoutLines.add(
-                    LayoutLine(
-                        text = line.text,
-                        y = top,
-                        height = height,
-                        fontSize = height,
-                        left = left,
-                        right = right,
-                        elements = elements
-                    )
-                )
             }
         }
 
         val avgConfidence = if (confidenceCount > 0) (totalConfidence / confidenceCount).toFloat() else 1.0f
+        val lines = LineClusterer.cluster(layoutWords)
 
         return LayoutPage(
             pageIndex = ocr.pageIndex,
             width = ocr.width.toFloat(),
             height = ocr.height.toFloat(),
-            lines = layoutLines,
+            words = layoutWords,
+            lines = lines,
             averageConfidence = avgConfidence
         )
     }
@@ -107,124 +129,23 @@ object LayoutToMarkdown {
     }
 
     /**
-     * Computes the statistical mode (most frequent size) of body text.
-     * Rounds sizes to 1.0 pt buckets to cluster font rendering variations.
+     * Computes the statistical mode (most frequent size) of body text,
+     * weighted by character count.
      */
     fun computeBodyModeSize(lines: List<LayoutLine>): Float {
-        val sizes = lines.map { it.fontSize }.filter { it > 0f }
-        if (sizes.isEmpty()) return 16f
+        val sizes = lines.flatMap { line ->
+            line.words.map { Pair(it.fontSize, it.text.length) }
+        }.filter { it.first > 0f }
 
-        val buckets = sizes.groupingBy { (it * 2).roundToInt() / 2f }.eachCount()
-        val mode = buckets.maxByOrNull { it.value }?.key
-        return mode ?: 16f
-    }
+        if (sizes.isEmpty()) return 12f
 
-    /**
-     * Sorts lines into natural reading order using stable 2D row-clustering.
-     */
-    private fun sortLinesInReadingOrder(
-        lines: List<LayoutLine>,
-        pageWidth: Float,
-        bodySize: Float
-    ): List<LayoutLine> {
-        if (lines.size <= 2) return lines.sortedBy { it.y }
-
-        val bandTolerance = (bodySize * 0.6f).coerceAtLeast(6f)
-
-        // Check for 2-column layout if page width is positive
-        if (pageWidth > 200f) {
-            val midpoint = pageWidth / 2f
-            val leftCol = mutableListOf<LayoutLine>()
-            val rightCol = mutableListOf<LayoutLine>()
-            val spanning = mutableListOf<LayoutLine>()
-
-            for (l in lines) {
-                when {
-                    l.left < (midpoint - pageWidth * 0.08f) && l.right > (midpoint + pageWidth * 0.08f) -> spanning.add(l)
-                    l.right <= midpoint + pageWidth * 0.05f -> leftCol.add(l)
-                    l.left >= midpoint - pageWidth * 0.05f -> rightCol.add(l)
-                    else -> spanning.add(l)
-                }
-            }
-
-            val isTwoColumn = leftCol.size >= 3 && rightCol.size >= 3 &&
-                    (leftCol.size + rightCol.size) >= (lines.size * 0.65f)
-
-            if (isTwoColumn) {
-                val minColTop = minOf(
-                    leftCol.minOfOrNull { it.y } ?: Float.MAX_VALUE,
-                    rightCol.minOfOrNull { it.y } ?: Float.MAX_VALUE
-                )
-                val topSpanning = spanning.filter { it.y < minColTop }
-                val bottomSpanning = spanning.filter { it !in topSpanning }
-
-                return clusterSort(topSpanning, bandTolerance) +
-                        clusterSort(leftCol, bandTolerance) +
-                        clusterSort(rightCol, bandTolerance) +
-                        clusterSort(bottomSpanning, bandTolerance)
-            }
+        val buckets = mutableMapOf<Float, Int>()
+        for ((size, count) in sizes) {
+            val rounded = (size * 2).roundToInt() / 2f
+            buckets[rounded] = (buckets[rounded] ?: 0) + count
         }
 
-        return clusterSort(lines, bandTolerance)
-    }
-
-    private fun clusterSort(lines: List<LayoutLine>, bandTolerance: Float): List<LayoutLine> {
-        if (lines.size <= 1) return lines
-        val sortedByY = lines.sortedWith(compareBy<LayoutLine> { it.y }.thenBy { it.left })
-
-        class RowBand(var yMin: Float, var yMax: Float) {
-            val items = mutableListOf<LayoutLine>()
-        }
-
-        val rows = mutableListOf<RowBand>()
-        for (l in sortedByY) {
-            val row = rows.find { abs(l.y - it.yMin) <= bandTolerance || (l.y >= it.yMin && l.y <= it.yMax) }
-            if (row != null) {
-                row.items.add(l)
-                row.yMin = minOf(row.yMin, l.y)
-                row.yMax = maxOf(row.yMax, l.y + l.height)
-            } else {
-                val newRow = RowBand(l.y, l.y + l.height)
-                newRow.items.add(l)
-                rows.add(newRow)
-            }
-        }
-
-        rows.sortBy { it.yMin }
-        return rows.flatMap { it.items.sortedBy { line -> line.left } }
-    }
-
-    /**
-     * Groups consecutive lines into paragraphs, blocks, or tables.
-     */
-    private fun groupLinesIntoBlocks(lines: List<LayoutLine>, bodySize: Float): List<List<LayoutLine>> {
-        val blocks = mutableListOf<MutableList<LayoutLine>>()
-        var currentBlock = mutableListOf<LayoutLine>()
-
-        for (line in lines) {
-            if (currentBlock.isEmpty()) {
-                currentBlock.add(line)
-            } else {
-                val prev = currentBlock.last()
-                val gap = line.y - (prev.y + prev.height)
-                val isNewParagraphGap = gap > (bodySize * 0.7f)
-                val isHeading = isHeadingLine(line, bodySize)
-                val prevIsHeading = isHeadingLine(prev, bodySize)
-
-                if (isNewParagraphGap || isHeading || prevIsHeading) {
-                    blocks.add(currentBlock)
-                    currentBlock = mutableListOf(line)
-                } else {
-                    currentBlock.add(line)
-                }
-            }
-        }
-
-        if (currentBlock.isNotEmpty()) {
-            blocks.add(currentBlock)
-        }
-
-        return blocks
+        return buckets.maxByOrNull { it.value }?.key ?: 12f
     }
 
     private fun isHeadingLine(line: LayoutLine, bodySize: Float): Boolean {
@@ -232,32 +153,37 @@ object LayoutToMarkdown {
         val raw = line.text.trim()
         val isShort = raw.length < 120
         val doesNotEndWithPeriod = !raw.endsWith(".") || raw.matches(Regex("""^\d+(\.\d+)*\.?$"""))
-        return isShort && doesNotEndWithPeriod && (ratio >= 1.15f || (line.isBold && raw.length < 70))
+        val isNumberedHeading = raw.matches(Regex("""^(\d+(\.\d+)*)\s+[A-Z].*"""))
+
+        return isShort && doesNotEndWithPeriod && (ratio >= 1.15f || isNumberedHeading || (line.isBold && raw.length < 70))
     }
 
     private fun formatBlock(lines: List<LayoutLine>, bodySize: Float): String {
         if (lines.isEmpty()) return ""
 
-        // Check if block forms a table
-        val tableMd = tryFormatTable(lines)
-        if (tableMd != null) {
-            return tableMd
-        }
-
-        // Check for Heading
-        if (lines.size <= 2) {
-            val first = lines.first()
+        val first = lines.first()
+        if (isHeadingLine(first, bodySize)) {
             val ratio = first.fontSize / bodySize
-            val raw = lines.joinToString(" ") { it.text.trim() }
-
-            if (isHeadingLine(first, bodySize)) {
+            if (lines.size == 1 || (lines.size == 2 && isHeadingLine(lines[1], bodySize))) {
+                val raw = lines.joinToString(" ") { it.text.trim() }
                 return when {
                     ratio >= 1.5f -> "# $raw"
                     ratio >= 1.3f -> "## $raw"
-                    ratio >= 1.15f -> "### $raw"
+                    ratio >= 1.15f -> "## $raw"
                     first.isBold -> "### $raw"
-                    else -> raw
+                    else -> "## $raw"
                 }
+            } else {
+                val headingRaw = first.text.trim()
+                val headingMd = when {
+                    ratio >= 1.5f -> "# $headingRaw"
+                    ratio >= 1.3f -> "## $headingRaw"
+                    ratio >= 1.15f -> "## $headingRaw"
+                    first.isBold -> "### $headingRaw"
+                    else -> "## $headingRaw"
+                }
+                val rest = formatBlock(lines.drop(1), bodySize)
+                return if (rest.isNotBlank()) "$headingMd\n\n$rest" else headingMd
             }
         }
 
@@ -272,30 +198,30 @@ object LayoutToMarkdown {
 
             when {
                 bulletMatch != null -> {
-                    val content = formatInline(bulletMatch.groupValues[2], line.isBold, line.isItalic)
-                    listItems.add("- $content")
+                    val content = formatWordsInline(line.words.drop(1))
+                    val finalContent = if (content.isNotBlank()) content else bulletMatch.groupValues[2]
+                    listItems.add("- $finalContent")
                     inList = true
                 }
                 numberedMatch != null -> {
                     val num = numberedMatch.groupValues[1]
-                    val content = formatInline(numberedMatch.groupValues[2], line.isBold, line.isItalic)
+                    val content = formatWordsInline(line.words.drop(1))
+                    val finalContent = if (content.isNotBlank()) content else numberedMatch.groupValues[2]
                     val prefix = if (num.endsWith(".") || num.endsWith(")")) num else "$num."
-                    listItems.add("$prefix $content")
+                    listItems.add("$prefix $finalContent")
                     inList = true
                 }
                 inList -> {
-                    // Continuation of list item only if indented or short
                     val lastIdx = listItems.lastIndex
                     if (lastIdx >= 0 && (line.left > lines.first().left + 10f || raw.length < 80)) {
-                        listItems[lastIdx] = listItems[lastIdx] + " " + formatInline(raw, line.isBold, line.isItalic)
+                        listItems[lastIdx] = listItems[lastIdx] + " " + formatWordsInline(line.words)
                     } else {
-                        // End list, start regular line
                         inList = false
-                        listItems.add(formatInline(raw, line.isBold, line.isItalic))
+                        listItems.add(formatWordsInline(line.words))
                     }
                 }
                 else -> {
-                    listItems.add(formatInline(raw, line.isBold, line.isItalic))
+                    listItems.add(formatWordsInline(line.words))
                 }
             }
         }
@@ -304,23 +230,20 @@ object LayoutToMarkdown {
             return listItems.joinToString("\n")
         }
 
-        // Reconstruct coherent paragraph with dehyphenation
+        // Reconstruct coherent paragraph with word-level styles and dehyphenation
         val paragraph = StringBuilder()
         for (line in lines) {
-            val raw = line.text.trim()
-            if (raw.isEmpty()) continue
-
-            val formattedLine = formatInline(raw, line.isBold, line.isItalic)
+            val lineFormatted = formatWordsInline(line.words)
+            if (lineFormatted.isEmpty()) continue
 
             if (paragraph.isEmpty()) {
-                paragraph.append(formattedLine)
+                paragraph.append(lineFormatted)
             } else {
-                // If previous line ended with trailing '-' and next starts with lowercase letter, merge!
-                if (paragraph.endsWith("-") && raw.firstOrNull()?.isLowerCase() == true) {
+                if (paragraph.endsWith("-") && lineFormatted.firstOrNull()?.isLowerCase() == true) {
                     paragraph.setLength(paragraph.length - 1)
-                    paragraph.append(formattedLine)
+                    paragraph.append(lineFormatted)
                 } else {
-                    paragraph.append(" ").append(formattedLine)
+                    paragraph.append(" ").append(lineFormatted)
                 }
             }
         }
@@ -328,73 +251,53 @@ object LayoutToMarkdown {
         return paragraph.toString()
     }
 
-    private fun formatInline(text: String, isBold: Boolean, isItalic: Boolean): String {
-        var result = text.trim()
-        if (isBold && !result.startsWith("**") && !result.endsWith("**")) {
-            result = "**$result**"
-        }
-        if (isItalic && !result.startsWith("*") && !result.endsWith("*")) {
-            result = "*$result*"
-        }
-        return result
-    }
+    /**
+     * Formats a list of LayoutWords with bold and italic runs.
+     * Merges consecutive styled words (**a** **b** -> **a b**).
+     * If > 80% of words are bold, leaves them unstyled to prevent ugly line-wide bolding.
+     */
+    fun formatWordsInline(words: List<LayoutWord>): String {
+        if (words.isEmpty()) return ""
 
-    private fun tryFormatTable(lines: List<LayoutLine>): String? {
-        if (lines.size < 2) return null
+        val boldCount = words.count { it.bold }
+        val mostlyBold = boldCount >= (words.size * 0.8) && words.size >= 5
 
-        // 1. Explicit pipe or tab table
-        val delimitedLines = lines.filter { it.text.contains("|") || it.text.contains("\t") }
-        if (delimitedLines.size >= (lines.size * 0.7f).coerceAtLeast(2f)) {
-            val rows = lines.map { l ->
-                if (l.text.contains("|")) {
-                    l.text.split("|").map { it.trim() }.filter { it.isNotEmpty() }
-                } else {
-                    l.text.split("\t").map { it.trim() }.filter { it.isNotEmpty() }
+        val sb = StringBuilder()
+        var i = 0
+
+        while (i < words.size) {
+            val w = words[i]
+            val applyBold = w.bold && !mostlyBold
+            val applyItalic = w.italic
+
+            if (applyBold || applyItalic) {
+                val run = mutableListOf<LayoutWord>()
+                while (i < words.size && (words[i].bold && !mostlyBold) == applyBold && words[i].italic == applyItalic) {
+                    run.add(words[i])
+                    i++
                 }
-            }.filter { it.size >= 2 }
 
-            if (rows.size >= 2) {
-                val maxCols = rows.maxOf { it.size }
-                val sb = StringBuilder()
-                val header = padCells(rows.first(), maxCols)
-                sb.append("| ").append(header.joinToString(" | ")).append(" |\n")
-                sb.append("| ").append(List(maxCols) { "---" }.joinToString(" | ")).append(" |\n")
-                for (i in 1 until rows.size) {
-                    val row = padCells(rows[i], maxCols)
-                    sb.append("| ").append(row.joinToString(" | ")).append(" |\n")
+                val runText = run.joinToString(" ") { escapeMarkdown(it.text) }
+                val styled = when {
+                    applyBold && applyItalic -> "***$runText***"
+                    applyBold -> "**$runText**"
+                    applyItalic -> "*$runText*"
+                    else -> runText
                 }
-                return sb.toString().trimEnd()
+
+                if (sb.isNotEmpty() && !sb.endsWith(" ")) sb.append(" ")
+                sb.append(styled)
+            } else {
+                if (sb.isNotEmpty() && !sb.endsWith(" ")) sb.append(" ")
+                sb.append(escapeMarkdown(w.text))
+                i++
             }
         }
 
-        // 2. Spatial alignment table (multi-column elements within lines)
-        val linesWithMultipleElements = lines.filter { it.elements.size >= 2 }
-        if (linesWithMultipleElements.size < 3 || linesWithMultipleElements.size < (lines.size * 0.75f)) {
-            return null
-        }
-
-        val colCount = linesWithMultipleElements.map { it.elements.size }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: return null
-        if (colCount < 2 || colCount > 8) return null
-
-        val matchingRows = linesWithMultipleElements.filter { it.elements.size == colCount }
-        if (matchingRows.size < 3) return null
-
-        val sb = StringBuilder()
-        val header = matchingRows.first().elements.map { it.text.trim() }
-        sb.append("| ").append(header.joinToString(" | ")).append(" |\n")
-        sb.append("| ").append(List(colCount) { "---" }.joinToString(" | ")).append(" |\n")
-
-        for (i in 1 until matchingRows.size) {
-            val row = matchingRows[i].elements.map { it.text.trim() }
-            sb.append("| ").append(row.joinToString(" | ")).append(" |\n")
-        }
-
-        return sb.toString().trimEnd()
+        return sb.toString()
     }
 
-    private fun padCells(cells: List<String>, count: Int): List<String> {
-        val list = cells.toMutableList()
-        while (list.size < count) list.add("")
-        return if (list.size > count) list.subList(0, count) else list
+    private fun escapeMarkdown(text: String): String {
+        return text
     }
 }

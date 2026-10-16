@@ -11,8 +11,12 @@ import com.markdrop.app.conversion.layout.LayoutToMarkdown
 import com.markdrop.app.conversion.local.LocalLlmEngine
 import com.markdrop.app.conversion.markdown.HeaderFooterCleaner
 import com.markdrop.app.conversion.ocr.MlKitOcrEngine
+import com.markdrop.app.conversion.layout.PageGeometry
+import com.markdrop.app.conversion.pdf.PdfOpenError
+import com.markdrop.app.conversion.pdf.PdfOpenException
 import com.markdrop.app.conversion.pdf.PdfPageRenderer
 import com.markdrop.app.conversion.pdf.TextLayerExtractor
+import com.markdrop.app.conversion.pdf.TextLayerSession
 import com.markdrop.app.data.db.ConversionStatus
 import com.markdrop.app.data.db.MarkdropDatabase
 import com.markdrop.app.data.db.PageResultEntity
@@ -75,6 +79,20 @@ class ConversionPipeline(
             LocalLlmEngine(context, app.modelManager.getModelPath(manifest))
         } else null
 
+        val textSession: TextLayerSession? = if (pdfRenderer != null) {
+            try {
+                TextLayerSession.open(context, pdfUri)
+            } catch (e: PdfOpenException) {
+                if (e.error == PdfOpenError.PASSWORD_REQUIRED) {
+                    db.conversionDao().updateStatus(jobId, ConversionStatus.FAILED)
+                    throw e
+                }
+                null
+            } catch (_: Exception) {
+                null
+            }
+        } else null
+
         try {
             db.conversionDao().updateStatus(jobId, ConversionStatus.PROCESSING)
 
@@ -106,14 +124,20 @@ class ConversionPipeline(
 
                 try {
                     // Step 1: Check for usable embedded text layer (born-digital PDFs)
-                    val textLines = if (pdfRenderer != null) {
-                        TextLayerExtractor.extractPageTextLayer(context, pdfUri, pageIndex)
-                    } else null
+                    val geom = textSession?.pageGeometry(pageIndex) ?: PageGeometry(595f, 842f)
+                    val words = textSession?.extractWords(pageIndex)
+                    val contentInfo = if (words != null) textSession.analyzePage(pageIndex, words) else null
 
-                    if (textLines != null) {
+                    if (contentInfo?.isUsableTextLayer == true) {
                         onProgress(progressIndex + 1, totalPages, "Extracting page ${progressIndex + 1} of $totalPages (text layer)...")
                         pageMarkdown = LayoutToMarkdown.formatPage(
-                            LayoutPage(pageIndex, 0f, 0f, textLines)
+                            LayoutPage(
+                                pageIndex = pageIndex,
+                                width = geom.width,
+                                height = geom.height,
+                                words = words ?: emptyList(),
+                                figures = contentInfo.figureBoxes
+                            )
                         )
                         engineUsed = "TEXT_LAYER"
                     } else {
@@ -239,6 +263,7 @@ class ConversionPipeline(
                 mode = job.mode
             )
         } finally {
+            textSession?.close()
             pdfRenderer?.close()
             ocrEngine.close()
             cloudClient?.close()

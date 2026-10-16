@@ -7,6 +7,7 @@ import com.markdrop.app.conversion.assemble.Assembler
 import com.markdrop.app.conversion.layout.LayoutPage
 import com.markdrop.app.conversion.layout.LayoutToMarkdown
 import com.markdrop.app.conversion.pdf.TextLayerExtractor
+import com.markdrop.app.conversion.pdf.TextLayerSession
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import org.junit.Before
 import org.junit.Test
@@ -66,16 +67,38 @@ class RealPipelineEvaluationHarnessTest {
             val uri = Uri.fromFile(pdfFile)
             val startTime = System.currentTimeMillis()
 
-            // Run real text layer extractor on page 0
-            val lines = TextLayerExtractor.extractPageTextLayer(context, uri, 0)
-            val markdown = if (lines != null) {
-                // Pass to real LayoutToMarkdown
-                LayoutToMarkdown.formatPage(
-                    LayoutPage(pageIndex = 0, width = 0f, height = 0f, lines = lines)
-                )
+            val textSession = try {
+                kotlinx.coroutines.runBlocking { TextLayerSession.open(context, uri) }
+            } catch (_: Exception) {
+                null
+            }
+
+            var extractedWordCount = 0
+            var hasTextLayer = false
+
+            val markdown = if (textSession != null) {
+                val geom = textSession.pageGeometry(0)
+                val words = textSession.extractWords(0)
+                extractedWordCount = words.size
+                val contentInfo = textSession.analyzePage(0, words)
+                if (contentInfo.isUsableTextLayer) {
+                    hasTextLayer = true
+                    LayoutToMarkdown.formatPage(
+                        LayoutPage(
+                            pageIndex = 0,
+                            width = geom.width,
+                            height = geom.height,
+                            words = words,
+                            figures = contentInfo.figureBoxes
+                        )
+                    )
+                } else {
+                    "> [!NOTE]\n> Scanned page with stamp or insufficient text; routed to OCR/Vision.\n"
+                }
             } else {
                 "> [!NOTE]\n> No text layer extracted (scanned or image-only page).\n"
             }
+            textSession?.close()
 
             val elapsed = System.currentTimeMillis() - startTime
 
@@ -88,13 +111,13 @@ class RealPipelineEvaluationHarnessTest {
                 """
                 {
                   "name": "$name",
-                  "hasTextLayer": ${lines != null},
-                  "lineCount": ${lines?.size ?: 0},
+                  "hasTextLayer": $hasTextLayer,
+                  "wordCount": $extractedWordCount,
                   "durationMs": $elapsed
                 }
                 """.trimIndent()
             )
-            println("Evaluated $name: ${lines?.size ?: 0} lines in ${elapsed}ms -> ${outFile.path}")
+            println("Evaluated $name: $extractedWordCount words in ${elapsed}ms -> ${outFile.path}")
         }
     }
 }
