@@ -7,7 +7,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.markdrop.app.conversion.ConversionEngine
 import com.markdrop.app.conversion.ConversionMode
 import com.markdrop.app.conversion.ConversionResult
 import com.markdrop.app.conversion.pdf.PdfPageRenderer
@@ -56,7 +55,6 @@ class ConvertViewModel(
     application: Application
 ) : AndroidViewModel(application) {
 
-    private val conversionEngine = ConversionEngine(application)
     private val secureKeyStore = com.markdrop.app.data.security.SecureKeyStore(application)
     private val modelManager = (application as com.markdrop.app.MarkdropApplication).modelManager
 

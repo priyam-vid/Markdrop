@@ -54,26 +54,6 @@ fun ExportBottomSheet(
         }
     }
 
-    // SAF Standalone HTML export
-    val htmlExportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("text/html")
-    ) { uri ->
-        if (uri != null) {
-            try {
-                val html = generateStandaloneHtml(baseName, markdownContent)
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    out.write(html.toByteArray())
-                }
-                Toast.makeText(context, "Saved $baseName.html with KaTeX & CSS", Toast.LENGTH_SHORT).show()
-                HapticHelper.performHaptic(view, HapticType.SUCCESS, true)
-                onDismiss()
-            } catch (e: Exception) {
-                Toast.makeText(context, "HTML export failed: ${e.message}", Toast.LENGTH_SHORT).show()
-                HapticHelper.performHaptic(view, HapticType.ERROR, true)
-            }
-        }
-    }
-
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
@@ -112,16 +92,6 @@ fun ExportBottomSheet(
                 onClick = {
                     HapticHelper.performHaptic(view, HapticType.LIGHT, true)
                     mdExportLauncher.launch("$baseName.md")
-                }
-            )
-
-            ExportOptionItem(
-                icon = Icons.Rounded.Html,
-                title = "Save as Standalone HTML",
-                subtitle = "Self-contained HTML document with KaTeX LaTeX math & styling",
-                onClick = {
-                    HapticHelper.performHaptic(view, HapticType.LIGHT, true)
-                    htmlExportLauncher.launch("$baseName.html")
                 }
             )
 
@@ -200,78 +170,4 @@ private fun ExportOptionItem(
             )
         }
     }
-}
-
-/**
- * Generates an elegant standalone HTML document containing KaTeX for math rendering,
- * github-markdown-css styling, and markdown parser.
- */
-private fun generateStandaloneHtml(title: String, markdown: String): String {
-    val escapedMd = markdown
-        .replace("\\", "\\\\")
-        .replace("`", "\\`")
-        .replace("$", "\\$")
-
-    return """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>$title - Markdrop</title>
-    <!-- GitHub Markdown CSS -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.5.1/github-markdown.min.css">
-    <!-- KaTeX Math -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
-    <!-- Marked.js Markdown parser -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <style>
-        body {
-            box-sizing: border-box;
-            min-width: 200px;
-            max-width: 980px;
-            margin: 0 auto;
-            padding: 45px;
-            background: #ffffff;
-            color: #1f2328;
-            font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif;
-        }
-        @media (prefers-color-scheme: dark) {
-            body {
-                background: #0d1117;
-                color: #e6edf3;
-            }
-            .markdown-body {
-                color-scheme: dark;
-            }
-        }
-        @media (max-width: 767px) {
-            body {
-                padding: 15px;
-            }
-        }
-    </style>
-</head>
-<body>
-    <article class="markdown-body" id="content"></article>
-    <script>
-        const rawMarkdown = `$escapedMd`;
-        document.getElementById('content').innerHTML = marked.parse(rawMarkdown);
-        document.addEventListener("DOMContentLoaded", function() {
-            renderMathInElement(document.body, {
-                delimiters: [
-                    {left: '$$', right: '$$', display: true},
-                    {left: '$', right: '$', display: false},
-                    {left: '\\(', right: '\\)', display: false},
-                    {left: '\\[', right: '\\]', display: true}
-                ],
-                throwOnError : false
-            });
-        });
-    </script>
-</body>
-</html>
-""".trimIndent()
 }

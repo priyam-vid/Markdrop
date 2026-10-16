@@ -15,7 +15,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.markdrop.app.ui.screens.convert.ConvertScreen
 import com.markdrop.app.ui.screens.library.LibraryScreen
-import com.markdrop.app.ui.screens.queue.QueueScreen
 import com.markdrop.app.ui.screens.settings.SettingsScreen
 
 private val ExpressiveMotionEasing = CubicBezierEasing(0.2f, 0.0f, 0.0f, 1.0f)
@@ -23,9 +22,8 @@ private const val ExpressiveMotionDuration = 450
 
 private fun NavBackStackEntry.routeIndex(): Int = when {
     destination.hasRoute<ConvertRoute>() -> 0
-    destination.hasRoute<QueueRoute>() -> 1
-    destination.hasRoute<LibraryRoute>() -> 2
-    destination.hasRoute<SettingsRoute>() -> 3
+    destination.hasRoute<LibraryRoute>() -> 1
+    destination.hasRoute<SettingsRoute>() -> 2
     else -> 0
 }
 
@@ -65,17 +63,6 @@ fun MarkdropNavHost(
             ConvertScreen(
                 onNavigateToSettings = {
                     navController.navigate(SettingsRoute) {
-                        popUpTo(navController.graph.startDestinationId) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                }
-            )
-        }
-        composable<QueueRoute> {
-            QueueScreen(
-                onNavigateToConvert = {
-                    navController.navigate(ConvertRoute) {
                         popUpTo(navController.graph.startDestinationId) { saveState = true }
                         launchSingleTop = true
                         restoreState = true

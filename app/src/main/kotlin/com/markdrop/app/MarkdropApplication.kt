@@ -6,7 +6,6 @@ import com.markdrop.app.data.db.MarkdropDatabase
 import com.markdrop.app.data.db.ConversionRepository
 import com.markdrop.app.data.settings.SettingsRepository
 import com.markdrop.app.data.settings.settingsDataStore
-import com.markdrop.app.queue.ConversionQueueManager
 
 class MarkdropApplication : Application() {
 
@@ -24,14 +23,6 @@ class MarkdropApplication : Application() {
 
     val conversionEngine: ConversionEngine by lazy {
         ConversionEngine(this)
-    }
-
-    val queueManager: ConversionQueueManager by lazy {
-        ConversionQueueManager(
-            context = this,
-            repository = conversionRepository,
-            conversionEngine = conversionEngine
-        )
     }
 
     val modelManager: com.markdrop.app.model.ModelManager by lazy {

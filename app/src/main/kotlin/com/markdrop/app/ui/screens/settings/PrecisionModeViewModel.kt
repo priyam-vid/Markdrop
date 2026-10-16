@@ -29,26 +29,12 @@ class PrecisionModeViewModel(
 
     val hfTokenFlow = settingsRepository.conversionSettingsFlow
 
-    // Repository Tree & Asset Picker State
-    private val _repoAssets = MutableStateFlow<List<RepoAssetItem>>(emptyList())
-    val repoAssets: StateFlow<List<RepoAssetItem>> = _repoAssets.asStateFlow()
-
-    private val _isLoadingAssets = MutableStateFlow(false)
-    val isLoadingAssets: StateFlow<Boolean> = _isLoadingAssets.asStateFlow()
-
-    private val _assetInspectionError = MutableStateFlow<String?>(null)
-    val assetInspectionError: StateFlow<String?> = _assetInspectionError.asStateFlow()
-
-    private val _activeRepositoryTarget = MutableStateFlow(DefaultModelManifest.DEFAULT.assetConfig.primaryTarget())
-    val activeRepositoryTarget: StateFlow<RepositoryTarget> = _activeRepositoryTarget.asStateFlow()
-
     init {
         viewModelScope.launch {
             settingsRepository.conversionSettingsFlow.collect { settings ->
                 val modelId = settings.precisionModelId ?: DefaultModelManifest.DEFAULT.modelId
                 val model = DefaultModelManifest.getModelById(modelId) ?: DefaultModelManifest.DEFAULT
                 _selectedModel.value = model
-                _activeRepositoryTarget.value = model.assetConfig.primaryTarget()
                 modelManager.checkLocalModel(model)
             }
         }
@@ -66,33 +52,8 @@ class PrecisionModeViewModel(
         val model = DefaultModelManifest.getModelById(modelId) ?: return
         viewModelScope.launch {
             settingsRepository.setPrecisionModelId(modelId)
-            _activeRepositoryTarget.value = model.assetConfig.primaryTarget()
-            _repoAssets.value = emptyList()
-            _assetInspectionError.value = null
-        }
-    }
-
-    fun selectRepositoryTarget(target: RepositoryTarget, hfToken: String? = null) {
-        _activeRepositoryTarget.value = target
-        inspectRepositoryTree(target, hfToken)
-    }
-
-    fun inspectRepositoryTree(target: RepositoryTarget? = null, hfToken: String? = null) {
-        val repoTarget = target ?: _activeRepositoryTarget.value
-        _activeRepositoryTarget.value = repoTarget
-        viewModelScope.launch {
-            _isLoadingAssets.value = true
-            _assetInspectionError.value = null
-            val result = modelManager.fetchRepoAssets(repoTarget, hfToken)
-            if (result.isSuccess) {
-                _repoAssets.value = result.getOrThrow()
-                _assetInspectionError.value = null
-            } else {
-                val ex = result.exceptionOrNull()
-                _repoAssets.value = emptyList()
-                _assetInspectionError.value = ex?.localizedMessage ?: "Failed to inspect repository tree"
-            }
-            _isLoadingAssets.value = false
+            _selectedModel.value = model
+            modelManager.checkLocalModel(model)
         }
     }
 
@@ -102,28 +63,12 @@ class PrecisionModeViewModel(
         }
     }
 
-    fun saveCustomDownloadUrl(url: String?) {
-        viewModelScope.launch {
-            settingsRepository.setCustomModelDownloadUrl(url)
-        }
-    }
-
     fun isRamSufficient(): Boolean {
         return modelManager.isDeviceRamSufficient(_selectedModel.value)
     }
 
-    fun startDownload(hfToken: String? = null, customUrl: String? = null) {
-        modelManager.startDownload(_selectedModel.value, hfToken, customUrl)
-    }
-
-    fun startDownloadWithAsset(asset: RepoAssetItem, target: RepositoryTarget, hfToken: String? = null) {
-        modelManager.startDownload(
-            manifest = _selectedModel.value,
-            hfToken = hfToken,
-            customUrlOverride = null,
-            selectedAsset = asset,
-            selectedTarget = target
-        )
+    fun startDownload(hfToken: String? = null) {
+        modelManager.startDownload(_selectedModel.value, hfToken)
     }
 
     fun cancelDownload() {

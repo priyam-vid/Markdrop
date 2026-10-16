@@ -207,20 +207,7 @@ fun SettingsScreen(
 
             ListItem(
                 headlineContent = { Text("Default Mode") },
-                supportingContent = { Text("Fast") }
-            )
-
-            ListItem(
-                headlineContent = { Text("Local Concurrency") },
-                supportingContent = { 
-                    Slider(
-                        value = uiState.conversionSettings.localConcurrency.toFloat(),
-                        onValueChange = { viewModel.setLocalConcurrency(it.roundToInt()) },
-                        valueRange = 1f..10f,
-                        steps = 8
-                    )
-                },
-                trailingContent = { Text(uiState.conversionSettings.localConcurrency.toString()) }
+                supportingContent = { Text("Offline") }
             )
 
             ListItem(

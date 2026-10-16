@@ -46,11 +46,7 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
-import com.markdrop.app.conversion.markdown.MathTablePostProcessor
-import com.markdrop.app.conversion.cloud.CloudProvider
-import com.markdrop.app.conversion.cloud.CloudVisionClient
 import com.markdrop.app.data.db.ConversionEntity
-import com.markdrop.app.data.security.SecureKeyStore
 import com.markdrop.app.util.HapticHelper
 import com.markdrop.app.util.HapticType
 import kotlinx.coroutines.Dispatchers
@@ -212,116 +208,6 @@ fun MarkdownViewerScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
                     )
-                }
-            }
-
-            // Contextual LaTeX Math & Table Post-Processing Suggestion Chips
-            val coroutineScope = rememberCoroutineScope()
-            var isRepairingMath by remember { mutableStateOf(false) }
-            var isRepairingTable by remember { mutableStateOf(false) }
-
-            val hasMath = remember(markdownText) { MathTablePostProcessor.hasUnformattedMath(markdownText) }
-            val hasTables = remember(markdownText) { MathTablePostProcessor.hasUnformattedTable(markdownText) }
-
-            if (hasMath || hasTables) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (hasMath) {
-                        SuggestionChip(
-                            onClick = {
-                                HapticHelper.performHaptic(view, HapticType.MEDIUM, true)
-                                coroutineScope.launch {
-                                    isRepairingMath = true
-                                    try {
-                                        val keyStore = SecureKeyStore(context)
-                                        val activeProvider = CloudProvider.entries.firstOrNull { keyStore.hasValidKey(it) }
-                                        val activeKey = activeProvider?.let { keyStore.getApiKey(it) }
-                                        val model = activeProvider?.let { keyStore.getSelectedModel(it) } ?: activeProvider?.defaultModel ?: ""
-
-                                        if (activeProvider != null && !activeKey.isNullOrBlank()) {
-                                            val client = CloudVisionClient()
-                                            try {
-                                                val repaired = withContext(Dispatchers.IO) {
-                                                    client.repairMarkdownSegment(markdownText, "latex", activeProvider, activeKey, model)
-                                                }
-                                                markdownText = repaired
-                                                Toast.makeText(context, "Repaired formulas with ${activeProvider.displayName} AI", Toast.LENGTH_SHORT).show()
-                                            } finally {
-                                                client.close()
-                                            }
-                                        } else {
-                                            markdownText = MathTablePostProcessor.fixMathEquations(markdownText)
-                                            Toast.makeText(context, "Equations converted to LaTeX ($ and $$)", Toast.LENGTH_SHORT).show()
-                                        }
-                                    } catch (e: Exception) {
-                                        markdownText = MathTablePostProcessor.fixMathEquations(markdownText)
-                                        Toast.makeText(context, "Applied local LaTeX formatting", Toast.LENGTH_SHORT).show()
-                                    } finally {
-                                        isRepairingMath = false
-                                    }
-                                }
-                            },
-                            label = { Text(if (isRepairingMath) "Repairing LaTeX..." else "✨ Fix LaTeX Formula") },
-                            icon = {
-                                if (isRepairingMath) {
-                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                } else {
-                                    Icon(Icons.Rounded.Functions, contentDescription = null, modifier = Modifier.size(16.dp))
-                                }
-                            },
-                            enabled = !isRepairingMath && !isRepairingTable
-                        )
-                    }
-                    if (hasTables) {
-                        SuggestionChip(
-                            onClick = {
-                                HapticHelper.performHaptic(view, HapticType.MEDIUM, true)
-                                coroutineScope.launch {
-                                    isRepairingTable = true
-                                    try {
-                                        val keyStore = SecureKeyStore(context)
-                                        val activeProvider = CloudProvider.entries.firstOrNull { keyStore.hasValidKey(it) }
-                                        val activeKey = activeProvider?.let { keyStore.getApiKey(it) }
-                                        val model = activeProvider?.let { keyStore.getSelectedModel(it) } ?: activeProvider?.defaultModel ?: ""
-
-                                        if (activeProvider != null && !activeKey.isNullOrBlank()) {
-                                            val client = CloudVisionClient()
-                                            try {
-                                                val repaired = withContext(Dispatchers.IO) {
-                                                    client.repairMarkdownSegment(markdownText, "table", activeProvider, activeKey, model)
-                                                }
-                                                markdownText = repaired
-                                                Toast.makeText(context, "Formatted tables with ${activeProvider.displayName} AI", Toast.LENGTH_SHORT).show()
-                                            } finally {
-                                                client.close()
-                                            }
-                                        } else {
-                                            markdownText = MathTablePostProcessor.formatAsciiTables(markdownText)
-                                            Toast.makeText(context, "Tables formatted to Markdown", Toast.LENGTH_SHORT).show()
-                                        }
-                                    } catch (e: Exception) {
-                                        markdownText = MathTablePostProcessor.formatAsciiTables(markdownText)
-                                        Toast.makeText(context, "Applied local table formatting", Toast.LENGTH_SHORT).show()
-                                    } finally {
-                                        isRepairingTable = false
-                                    }
-                                }
-                            },
-                            label = { Text(if (isRepairingTable) "Formatting Table..." else "✨ Format Table") },
-                            icon = {
-                                if (isRepairingTable) {
-                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                } else {
-                                    Icon(Icons.Rounded.TableChart, contentDescription = null, modifier = Modifier.size(16.dp))
-                                }
-                            },
-                            enabled = !isRepairingMath && !isRepairingTable
-                        )
-                    }
                 }
             }
 

@@ -10,7 +10,6 @@ import com.markdrop.app.conversion.cloud.CloudProvider
 import com.markdrop.app.conversion.cloud.CloudVisionClient
 import com.markdrop.app.data.security.SecureKeyStore
 import com.markdrop.app.data.settings.SettingsRepository
-import com.markdrop.app.model.RemoteModelRegistryManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -97,8 +96,7 @@ class AdvancedModeViewModel(
         _uiState.value = _uiState.value.copy(providerStates = currentStates)
 
         viewModelScope.launch {
-            val registry = RemoteModelRegistryManager.getRegistry(settingsRepository)
-            val result = visionClient.fetchAvailableModelsWithPricing(provider, key, registry.deprecated_model_ids)
+            val result = visionClient.fetchAvailableModelsWithPricing(provider, key)
             val updated = _uiState.value.providerStates.toMutableMap()
             val item = updated[provider] ?: return@launch
 
