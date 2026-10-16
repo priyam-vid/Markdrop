@@ -43,8 +43,12 @@ class ConversionWorker(
         val job = db.conversionDao().getById(jobId) ?: return Result.failure()
 
         // Set up foreground notification immediately
-        val initialInfo = createForegroundInfo("Starting conversion for ${job.fileName}...", 0, job.pageCount)
-        setForeground(initialInfo)
+        try {
+            val initialInfo = createForegroundInfo("Starting conversion for ${job.fileName}...", 0, job.pageCount)
+            setForeground(initialInfo)
+        } catch (_: Exception) {
+            // Android 14+ foreground service start restrictions when backgrounded
+        }
 
         val pipeline = ConversionPipeline(context)
 
@@ -53,7 +57,6 @@ class ConversionWorker(
                 jobId = jobId,
                 onProgress = { current, total, message ->
                     val progressInfo = createForegroundInfo(message, current, total)
-                    // Note: setForeground must not be spammed too rapidly, but CoroutineWorker handles throttled setForegroundAsync
                     try {
                         notificationManager.notify(NOTIFICATION_ID, progressInfo.notification)
                     } catch (_: Exception) {}
@@ -64,9 +67,16 @@ class ConversionWorker(
             showCompletionNotification(job.fileName)
             Result.success(workDataOf(KEY_JOB_ID to jobId))
         } catch (e: Exception) {
-            db.conversionDao().markFailed(jobId, e.message ?: "Conversion failed")
-            showFailureNotification(job.fileName, e.message)
-            Result.failure(workDataOf("error" to (e.message ?: "Unknown error")))
+            if (isStopped || e is kotlinx.coroutines.CancellationException || e is com.markdrop.app.conversion.ConversionCancelledException) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    db.conversionDao().updateStatus(jobId, ConversionStatus.CANCELLED)
+                }
+                Result.failure(workDataOf("cancelled" to true))
+            } else {
+                db.conversionDao().markFailed(jobId, e.message ?: "Conversion failed")
+                showFailureNotification(job.fileName, e.message)
+                Result.failure(workDataOf("error" to (e.message ?: "Unknown error")))
+            }
         }
     }
 
