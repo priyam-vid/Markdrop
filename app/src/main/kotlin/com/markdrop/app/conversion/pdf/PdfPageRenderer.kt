@@ -11,7 +11,6 @@ import android.os.ParcelFileDescriptor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.Closeable
-import java.io.File
 
 class PdfPageRenderer(
     private val context: Context,
@@ -20,7 +19,7 @@ class PdfPageRenderer(
 
     private val pfd: ParcelFileDescriptor = context.contentResolver.openFileDescriptor(uri, "r")
         ?: throw IllegalArgumentException("Cannot open PDF descriptor for URI: $uri")
-    
+
     private val renderer: PdfRenderer = PdfRenderer(pfd)
 
     val pageCount: Int
@@ -28,7 +27,8 @@ class PdfPageRenderer(
 
     suspend fun renderPageToBitmap(
         pageIndex: Int,
-        scaleFactor: Float = 2.0f
+        targetDpi: Int = 200,
+        isOcrMode: Boolean = false
     ): Bitmap = withContext(Dispatchers.IO) {
         require(pageIndex in 0 until pageCount) {
             "Invalid pageIndex $pageIndex. Total pages: $pageCount"
@@ -38,12 +38,25 @@ class PdfPageRenderer(
         synchronized(this@PdfPageRenderer) {
             val page = renderer.openPage(pageIndex)
             try {
-                val maxDimension = 1800f
+                // PDF points are 72 per inch: scale = targetDpi / 72f
+                val requestedScale = targetDpi / 72f
+
+                // Target long edge: ~2200px for OCR, ~2000px for Cloud Vision
+                var maxDimension = if (isOcrMode) 2200f else 2000f
+
+                // Memory guard: Check JVM heap headroom
+                val runtime = Runtime.getRuntime()
+                val freeMemBytes = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
+                val freeMemMb = freeMemBytes / (1024 * 1024)
+                if (freeMemMb < 64) {
+                    maxDimension = 1600f // Fallback to safe scale under memory pressure to prevent OOM
+                }
+
                 val maxPageDim = maxOf(page.width, page.height).toFloat()
                 val effectiveScale = if (maxPageDim > 0f) {
-                    minOf(maxDimension / maxPageDim, scaleFactor)
+                    minOf(maxDimension / maxPageDim, requestedScale)
                 } else {
-                    scaleFactor
+                    requestedScale
                 }
 
                 val targetWidth = (page.width * effectiveScale).toInt().coerceAtLeast(1)
@@ -69,6 +82,17 @@ class PdfPageRenderer(
                 page.close()
             }
         }
+    }
+
+    /**
+     * Backward-compatible overload for existing callers specifying scaleFactor.
+     */
+    suspend fun renderPageToBitmap(
+        pageIndex: Int,
+        scaleFactor: Float
+    ): Bitmap {
+        val targetDpi = (scaleFactor * 72f).toInt().coerceAtLeast(150)
+        return renderPageToBitmap(pageIndex, targetDpi = targetDpi, isOcrMode = scaleFactor >= 2.2f)
     }
 
     override fun close() {

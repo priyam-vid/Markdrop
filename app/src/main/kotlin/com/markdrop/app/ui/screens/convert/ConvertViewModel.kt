@@ -41,7 +41,7 @@ data class SelectedPdfInfo(
 data class ConvertScreenUiState(
     val selectedPdf: SelectedPdfInfo? = null,
     val selectedPageIndices: Set<Int> = emptySet(),
-    val selectedMode: ConversionMode = ConversionMode.FAST,
+    val selectedMode: ConversionMode = ConversionMode.OFFLINE,
     val status: ConvertStatus = ConvertStatus.Idle,
     val isPrecisionAvailable: Boolean = false,
     val isAdvancedAvailable: Boolean = false,
@@ -129,47 +129,66 @@ class ConvertViewModel(
         val totalToProcess = pagesToProcess.size
 
         viewModelScope.launch {
+            val app = getApplication<com.markdrop.app.MarkdropApplication>()
+
             _uiState.value = _uiState.value.copy(
                 status = ConvertStatus.Converting(currentPage = 0, totalPages = totalToProcess, progress = 0f)
             )
 
             try {
-                val result = conversionEngine.convertPdf(
-                    pdfUri = pdf.uri,
+                // Insert job record into Room DB
+                val entity = com.markdrop.app.data.db.ConversionEntity(
+                    fileName = pdf.name,
+                    pdfUri = pdf.uri.toString(),
                     mode = mode,
-                    selectedPages = pagesToProcess,
-                    onProgress = { current, total, statusMsg ->
-                        val progress = if (total > 0) current.toFloat() / total.toFloat() else 0f
-                        _uiState.value = _uiState.value.copy(
-                            status = ConvertStatus.Converting(
-                                currentPage = current,
-                                totalPages = total,
-                                progress = progress,
-                                statusMessage = statusMsg
+                    status = com.markdrop.app.data.db.ConversionStatus.PENDING,
+                    pageCount = totalToProcess,
+                    pagesCompleted = 0,
+                    progress = 0f,
+                    fileSizeBytes = pdf.sizeBytes
+                )
+                val jobId = app.conversionRepository.insert(entity)
+
+                // Enqueue background WorkManager job with foreground notification
+                val workRequest = androidx.work.OneTimeWorkRequestBuilder<com.markdrop.app.conversion.worker.ConversionWorker>()
+                    .setInputData(androidx.work.workDataOf(com.markdrop.app.conversion.worker.ConversionWorker.KEY_JOB_ID to jobId))
+                    .addTag("conversion_job_$jobId")
+                    .build()
+
+                androidx.work.WorkManager.getInstance(app).enqueue(workRequest)
+
+                // Observe conversion progress and completion from Room DB
+                app.conversionRepository.getByIdFlow(jobId).collect { currentJob ->
+                    if (currentJob == null) return@collect
+                    when (currentJob.status) {
+                        com.markdrop.app.data.db.ConversionStatus.DONE,
+                        com.markdrop.app.data.db.ConversionStatus.PARTIAL -> {
+                            val result = ConversionResult(
+                                markdown = currentJob.markdownContent ?: "",
+                                pageCount = currentJob.pageCount,
+                                durationMs = currentJob.durationMs,
+                                mode = currentJob.mode
                             )
-                        )
+                            _uiState.value = _uiState.value.copy(status = ConvertStatus.Success(result))
+                        }
+                        com.markdrop.app.data.db.ConversionStatus.FAILED -> {
+                            _uiState.value = _uiState.value.copy(
+                                status = ConvertStatus.Error(currentJob.errorMessage ?: "Conversion failed")
+                            )
+                        }
+                        com.markdrop.app.data.db.ConversionStatus.PROCESSING -> {
+                            _uiState.value = _uiState.value.copy(
+                                status = ConvertStatus.Converting(
+                                    currentPage = currentJob.pagesCompleted,
+                                    totalPages = currentJob.pageCount,
+                                    progress = currentJob.progress,
+                                    statusMessage = "Processing page ${currentJob.pagesCompleted} of ${currentJob.pageCount}..."
+                                )
+                            )
+                        }
+                        else -> {}
                     }
-                )
-
-                // Save to Room DB for Library history
-                val app = getApplication<com.markdrop.app.MarkdropApplication>()
-                app.conversionRepository.insert(
-                    com.markdrop.app.data.db.ConversionEntity(
-                        fileName = pdf.name,
-                        pdfUri = pdf.uri.toString(),
-                        markdownContent = result.markdown,
-                        mode = mode,
-                        status = com.markdrop.app.data.db.ConversionStatus.DONE,
-                        pageCount = result.pageCount,
-                        pagesCompleted = result.pageCount,
-                        progress = 1.0f,
-                        durationMs = result.durationMs,
-                        completedAt = System.currentTimeMillis(),
-                        fileSizeBytes = pdf.sizeBytes
-                    )
-                )
-
-                _uiState.value = _uiState.value.copy(status = ConvertStatus.Success(result))
+                }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     status = ConvertStatus.Error(e.localizedMessage ?: "Conversion failed")

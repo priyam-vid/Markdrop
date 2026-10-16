@@ -4,19 +4,43 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [ConversionEntity::class],
-    version = 1,
+    entities = [ConversionEntity::class, PageResultEntity::class],
+    version = 2,
     exportSchema = false
 )
 abstract class MarkdropDatabase : RoomDatabase() {
 
     abstract fun conversionDao(): ConversionDao
+    abstract fun pageResultDao(): PageResultDao
 
     companion object {
         @Volatile
         private var INSTANCE: MarkdropDatabase? = null
+
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `page_results` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `jobId` INTEGER NOT NULL,
+                        `pageIndex` INTEGER NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `markdown` TEXT,
+                        `error` TEXT,
+                        `durationMs` INTEGER NOT NULL,
+                        `engineUsed` TEXT,
+                        `createdAt` INTEGER NOT NULL,
+                        FOREIGN KEY(`jobId`) REFERENCES `conversions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_page_results_jobId` ON `page_results` (`jobId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_page_results_jobId_pageIndex` ON `page_results` (`jobId`, `pageIndex`)")
+            }
+        }
 
         fun getInstance(context: Context): MarkdropDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -24,7 +48,7 @@ abstract class MarkdropDatabase : RoomDatabase() {
                     context.applicationContext,
                     MarkdropDatabase::class.java,
                     "markdrop.db"
-                ).fallbackToDestructiveMigration()
+                ).addMigrations(MIGRATION_1_2)
                  .build()
                  .also { INSTANCE = it }
             }

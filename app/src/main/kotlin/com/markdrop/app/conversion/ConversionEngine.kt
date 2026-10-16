@@ -32,10 +32,10 @@ class ConversionEngine(
         val startTime = System.currentTimeMillis()
 
         when (mode) {
-            ConversionMode.FAST -> convertWithFastMode(pdfUri, selectedPages, onProgress, startTime)
+            ConversionMode.OFFLINE, ConversionMode.FAST -> convertWithFastMode(pdfUri, selectedPages, onProgress, startTime)
+            ConversionMode.AI, ConversionMode.ADVANCED -> convertWithAdvancedMode(pdfUri, selectedPages, onProgress, startTime)
             ConversionMode.SMART -> convertWithSmartMode(pdfUri, selectedPages, onProgress, startTime)
             ConversionMode.PRECISION -> convertWithPrecisionMode(pdfUri, selectedPages, onProgress, startTime)
-            ConversionMode.ADVANCED -> convertWithAdvancedMode(pdfUri, selectedPages, onProgress, startTime)
         }
     }
 

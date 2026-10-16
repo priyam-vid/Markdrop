@@ -4,20 +4,36 @@ enum class ConversionMode(
     val title: String,
     val description: String
 ) {
+    OFFLINE(
+        title = "Offline",
+        description = "Free & 100% private. Uses embedded text layer when available, else on-device OCR. Never touches the network."
+    ),
+    AI(
+        title = "AI",
+        description = "Frontier quality. Uses embedded text layer when available, else frontier cloud vision (Gemini, Claude, OpenAI) or local AI."
+    ),
+
+    // Legacy aliases maintained for Room database backward compatibility
     FAST(
-        title = "Fast",
-        description = "Free & offline. Uses on-device OCR for quick text extraction. Complex tables and diagrams will be approximate."
+        title = "Offline",
+        description = "Free & 100% private. Uses embedded text layer when available, else on-device OCR."
     ),
     SMART(
-        title = "Smart",
-        description = "Hybrid intelligent routing. Analyzes layout complexity per page: routes plain text to fast OCR and complex charts/tables/math to AI."
+        title = "AI",
+        description = "Frontier quality with intelligent page routing."
     ),
     PRECISION(
-        title = "Precision",
-        description = "Free (local AI). Runs an on-device vision model for higher accuracy formatting. Requires model download and 6GB+ RAM."
+        title = "AI (Local)",
+        description = "On-device local vision model."
     ),
     ADVANCED(
-        title = "Advanced",
-        description = "Bring-your-own-key cloud vision. Sends pages to frontier AI models (OpenAI, Gemini, Claude) via your private API key."
-    )
+        title = "AI (Cloud)",
+        description = "Frontier cloud vision model."
+    );
+
+    val isOffline: Boolean
+        get() = this == OFFLINE || this == FAST
+
+    val isAi: Boolean
+        get() = this == AI || this == ADVANCED || this == PRECISION || this == SMART
 }

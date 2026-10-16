@@ -172,12 +172,7 @@ fun ConvertScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Icon(
-                            imageVector = when (uiState.selectedMode) {
-                                ConversionMode.FAST -> Icons.Rounded.Bolt
-                                ConversionMode.SMART -> Icons.Rounded.AutoAwesome
-                                ConversionMode.PRECISION -> Icons.Rounded.Psychology
-                                ConversionMode.ADVANCED -> Icons.Rounded.Cloud
-                            },
+                            imageVector = if (uiState.selectedMode.isOffline) Icons.Rounded.Bolt else Icons.Rounded.AutoAwesome,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(20.dp)
@@ -211,19 +206,19 @@ fun ConvertScreen(
                         },
                         onRunFastMode = {
                             HapticHelper.performHaptic(view, HapticType.MEDIUM, true)
-                            viewModel.selectMode(ConversionMode.FAST)
+                            viewModel.selectMode(ConversionMode.OFFLINE)
                             viewModel.startConversion()
                         },
                         onRunAdvancedMode = {
                             HapticHelper.performHaptic(view, HapticType.MEDIUM, true)
-                            viewModel.selectMode(ConversionMode.ADVANCED)
-                            if (uiState.isAdvancedAvailable) {
+                            viewModel.selectMode(ConversionMode.AI)
+                            if (uiState.isAdvancedAvailable || uiState.isPrecisionAvailable) {
                                 viewModel.startConversion()
                             } else if (onNavigateToSettings != null) {
-                                Toast.makeText(context, "Configure your API key in Settings > Advanced Mode", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "Configure your API key or model in Settings", Toast.LENGTH_LONG).show()
                                 onNavigateToSettings()
                             } else {
-                                Toast.makeText(context, "Configure your API key in Settings > Advanced Mode", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "Configure your API key or model in Settings", Toast.LENGTH_LONG).show()
                             }
                         },
                         onNavigateToSettings = onNavigateToSettings
@@ -259,8 +254,8 @@ fun ConvertScreen(
                 )
             }
 
-            // Prompt user if Precision Mode is selected but no compatible local model is ready
-            if (uiState.selectedPdf != null && uiState.selectedMode == ConversionMode.PRECISION && !uiState.isPrecisionAvailable) {
+            // Prompt user if AI Mode is selected but neither Cloud nor Local engine is configured
+            if (uiState.selectedPdf != null && uiState.selectedMode.isAi && !uiState.isAdvancedAvailable && !uiState.isPrecisionAvailable) {
                 OutlinedCard(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
@@ -283,14 +278,14 @@ fun ConvertScreen(
                                 tint = MaterialTheme.colorScheme.primary
                             )
                             Text(
-                                text = "Precision Model Not Ready",
+                                text = "AI Engine Not Configured",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
                         Text(
-                            text = "A verified SentencePiece-compatible model (such as PaliGemma 2) is required for on-device Precision Mode. You can convert right now using Fast Mode or Advanced Mode.",
+                            text = "AI mode requires a configured Cloud Vision API key (Gemini, Claude, OpenAI) or a downloaded on-device local model. You can convert right now using Offline mode, or configure an engine in Settings.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -301,26 +296,28 @@ fun ConvertScreen(
                             FilledTonalButton(
                                 onClick = {
                                     HapticHelper.performHaptic(view, HapticType.LIGHT, true)
-                                    viewModel.selectMode(ConversionMode.FAST)
+                                    viewModel.selectMode(ConversionMode.OFFLINE)
                                 },
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
-                                Icon(Icons.Rounded.Speed, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Rounded.Bolt, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Fast Mode (OCR)", style = MaterialTheme.typography.labelSmall)
+                                Text("Offline Mode", style = MaterialTheme.typography.labelSmall)
                             }
-                            FilledTonalButton(
-                                onClick = {
-                                    HapticHelper.performHaptic(view, HapticType.LIGHT, true)
-                                    viewModel.selectMode(ConversionMode.ADVANCED)
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Icon(Icons.Rounded.Cloud, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Advanced Mode", style = MaterialTheme.typography.labelSmall)
+                            if (onNavigateToSettings != null) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        HapticHelper.performHaptic(view, HapticType.LIGHT, true)
+                                        onNavigateToSettings()
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Settings", style = MaterialTheme.typography.labelSmall)
+                                }
                             }
                         }
                     }
@@ -330,10 +327,9 @@ fun ConvertScreen(
             // Convert Action Button
             val isConverting = uiState.status is ConvertStatus.Converting
             val hasSelectedPages = uiState.selectedPageIndices.isNotEmpty()
-            val isModeReady = when (uiState.selectedMode) {
-                ConversionMode.FAST, ConversionMode.SMART -> true
-                ConversionMode.PRECISION -> uiState.isPrecisionAvailable
-                ConversionMode.ADVANCED -> uiState.isAdvancedAvailable
+            val isModeReady = when {
+                uiState.selectedMode.isOffline -> true
+                else -> uiState.isAdvancedAvailable || uiState.isPrecisionAvailable
             }
             val canConvert = uiState.selectedPdf != null && hasSelectedPages && isModeReady && !isConverting
 
@@ -360,8 +356,7 @@ fun ConvertScreen(
                     Icon(Icons.Rounded.Transform, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        if (uiState.selectedMode == ConversionMode.PRECISION && !uiState.isPrecisionAvailable) "Precision Model Not Ready"
-                        else if (uiState.selectedMode == ConversionMode.ADVANCED && !uiState.isAdvancedAvailable) "Configure Key in Settings"
+                        if (uiState.selectedMode.isAi && !uiState.isAdvancedAvailable && !uiState.isPrecisionAvailable) "Configure AI in Settings"
                         else if (uiState.selectedPageIndices.isNotEmpty()) "Convert ${uiState.selectedPageIndices.size} Pages"
                         else "Convert to Markdown",
                         style = MaterialTheme.typography.titleMedium
@@ -524,7 +519,7 @@ private fun ModeSelectorSection(
     onModeSelected: (ConversionMode) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val modes = listOf(ConversionMode.FAST, ConversionMode.SMART, ConversionMode.PRECISION, ConversionMode.ADVANCED)
+    val modes = listOf(ConversionMode.OFFLINE, ConversionMode.AI)
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -538,12 +533,13 @@ private fun ModeSelectorSection(
 
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
             modes.forEachIndexed { index, mode ->
+                val isSelected = (if (selectedMode.isOffline) ConversionMode.OFFLINE else ConversionMode.AI) == mode
                 SegmentedButton(
-                    selected = selectedMode == mode,
+                    selected = isSelected,
                     onClick = { onModeSelected(mode) },
                     shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size),
                     icon = {
-                        SegmentedButtonDefaults.Icon(active = selectedMode == mode)
+                        SegmentedButtonDefaults.Icon(active = isSelected)
                     }
                 ) {
                     Text(mode.title)
@@ -582,12 +578,7 @@ private fun PreFlightEstimatorCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Icon(
-                    imageVector = when (mode) {
-                        ConversionMode.FAST -> Icons.Rounded.Speed
-                        ConversionMode.SMART -> Icons.Rounded.AutoAwesome
-                        ConversionMode.PRECISION -> Icons.Rounded.Memory
-                        ConversionMode.ADVANCED -> Icons.Rounded.Paid
-                    },
+                    imageVector = if (mode.isOffline) Icons.Rounded.Bolt else Icons.Rounded.AutoAwesome,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp)
@@ -600,49 +591,30 @@ private fun PreFlightEstimatorCard(
                 )
             }
 
-            when (mode) {
-                ConversionMode.FAST -> {
-                    Text(
-                        text = "• Pages: $selectedPagesCount of $totalPages\n• Cost: $0.00 (100% Free & Offline)\n• Tokens: 0 · Instant on-device OCR",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            if (mode.isOffline) {
+                Text(
+                    text = "• Pages: $selectedPagesCount of $totalPages\n• Cost: $0.00 (100% Free & Offline)\n• Engine: Text Layer + ML Kit OCR",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                val estInputTokens = selectedPagesCount * 2100
+                val estOutputTokens = selectedPagesCount * 500
+                val estTotalTokens = estInputTokens + estOutputTokens
+                val costEstimate = if (promptPricePerToken != null) {
+                    String.format(java.util.Locale.US, "$%.4f", estInputTokens * promptPricePerToken)
+                } else when {
+                    configuredModel.contains("flash", ignoreCase = true) -> String.format(java.util.Locale.US, "$%.4f", estTotalTokens * 0.0000003)
+                    configuredModel.contains("mini", ignoreCase = true) -> String.format(java.util.Locale.US, "$%.4f", estTotalTokens * 0.0000006)
+                    configuredModel.contains("sonnet", ignoreCase = true) -> String.format(java.util.Locale.US, "$%.3f", estTotalTokens * 0.000005)
+                    else -> String.format(java.util.Locale.US, "$%.4f", estTotalTokens * 0.0000015)
                 }
-                ConversionMode.SMART -> {
-                    Text(
-                        text = "• Pages: $selectedPagesCount of $totalPages\n• Routing: Hybrid intelligent (OCR for text, AI for tables/math)\n• Token Savings: ~50–70% compared to full AI",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                ConversionMode.PRECISION -> {
-                    val ramText = String.format(java.util.Locale.US, "%.1f GB", deviceRamGb)
-                    val ramWarning = if (deviceRamGb < 8.0) "\n• High Memory Pressure: Slower inference expected (<8GB RAM)" else ""
-                    Text(
-                        text = "• Pages: $selectedPagesCount of $totalPages\n• Engine: Local on-device LiteRT runtime\n• Memory: $ramText RAM detected (${if (isRamSufficient) "Sufficient" else "Warning: 6GB+ recommended"})$ramWarning",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (isRamSufficient && deviceRamGb >= 8.0) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
-                    )
-                }
-                ConversionMode.ADVANCED -> {
-                    val estInputTokens = selectedPagesCount * 2100
-                    val estOutputTokens = selectedPagesCount * 500
-                    val estTotalTokens = estInputTokens + estOutputTokens
-                    val costEstimate = if (promptPricePerToken != null) {
-                        String.format(java.util.Locale.US, "$%.4f", estInputTokens * promptPricePerToken)
-                    } else when {
-                        configuredModel.contains("flash", ignoreCase = true) -> String.format(java.util.Locale.US, "$%.4f", estTotalTokens * 0.0000003)
-                        configuredModel.contains("mini", ignoreCase = true) -> String.format(java.util.Locale.US, "$%.4f", estTotalTokens * 0.0000006)
-                        configuredModel.contains("sonnet", ignoreCase = true) -> String.format(java.util.Locale.US, "$%.3f", estTotalTokens * 0.000005)
-                        else -> String.format(java.util.Locale.US, "$%.4f", estTotalTokens * 0.0000015)
-                    }
 
-                    Text(
-                        text = "• Pages: $selectedPagesCount of $totalPages\n• Target: $configuredProvider ($configuredModel)\n• Est. Tokens: ~$estTotalTokens (~$estInputTokens in / ~$estOutputTokens out)\n• Est. API Cost: ~$costEstimate USD (billed directly by provider)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    text = "• Pages: $selectedPagesCount of $totalPages\n• Target: $configuredProvider ($configuredModel)\n• Est. Tokens: ~$estTotalTokens (~$estInputTokens in / ~$estOutputTokens out)\n• Est. API Cost: ~$costEstimate USD (billed directly by provider)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -858,7 +830,7 @@ private fun ErrorCard(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Fast Mode (OCR)", style = MaterialTheme.typography.labelSmall)
+                        Text("Offline Mode", style = MaterialTheme.typography.labelSmall)
                     }
 
                     FilledTonalButton(
@@ -867,12 +839,12 @@ private fun ErrorCard(
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Icon(
-                            Icons.Rounded.Cloud,
+                            Icons.Rounded.AutoAwesome,
                             contentDescription = null,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Advanced Mode", style = MaterialTheme.typography.labelSmall)
+                        Text("AI Mode", style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }

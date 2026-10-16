@@ -5,6 +5,7 @@ enum class ConversionStatus {
     WAITING,
     PROCESSING,
     DONE,
+    PARTIAL,
     FAILED,
     PAUSED,
     CANCELLED

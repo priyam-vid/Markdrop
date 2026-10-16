@@ -96,6 +96,9 @@ dependencies {
     // ML Kit OCR
     implementation(libs.mlkit.text.recognition)
 
+    // PDFBox Android (Apache-2.0)
+    implementation(libs.pdfbox)
+
     // WorkManager
     implementation(libs.androidx.work.runtime.ktx)
 
