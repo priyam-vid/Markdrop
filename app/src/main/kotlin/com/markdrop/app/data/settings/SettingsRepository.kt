@@ -30,6 +30,7 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         val ADVANCED_MODE_EXPLAINER_SHOWN = booleanPreferencesKey("advanced_mode_explainer_shown")
         val STRIP_HEADER_FOOTER_ENABLED = booleanPreferencesKey("strip_header_footer_enabled")
         val CACHED_REMOTE_MODEL_REGISTRY = stringPreferencesKey("cached_remote_model_registry")
+        val SAVE_DIAGNOSTICS_ENABLED = booleanPreferencesKey("save_diagnostics_enabled")
     }
 
     val themeSettingsFlow: Flow<ThemeSettings> = dataStore.data.map { preferences ->
@@ -96,6 +97,14 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setCachedRemoteModelRegistry(json: String) {
         dataStore.edit { preferences -> preferences[Keys.CACHED_REMOTE_MODEL_REGISTRY] = json }
+    }
+
+    val saveDiagnosticsEnabledFlow: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[Keys.SAVE_DIAGNOSTICS_ENABLED] ?: false
+    }
+
+    suspend fun setSaveDiagnosticsEnabled(enabled: Boolean) {
+        dataStore.edit { preferences -> preferences[Keys.SAVE_DIAGNOSTICS_ENABLED] = enabled }
     }
 
     fun getModelPricing(modelId: String): Flow<Double?> {

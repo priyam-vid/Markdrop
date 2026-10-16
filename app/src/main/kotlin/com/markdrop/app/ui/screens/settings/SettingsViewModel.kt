@@ -11,6 +11,7 @@ data class SettingsUiState(
     val themeSettings: ThemeSettings = ThemeSettings(),
     val interactionSettings: InteractionSettings = InteractionSettings(),
     val conversionSettings: ConversionSettings = ConversionSettings(),
+    val saveDiagnosticsEnabled: Boolean = false,
 )
 
 class SettingsViewModel(private val settingsRepository: SettingsRepository) : ViewModel() {
@@ -18,9 +19,15 @@ class SettingsViewModel(private val settingsRepository: SettingsRepository) : Vi
         settingsRepository.themeSettingsFlow,
         settingsRepository.interactionSettingsFlow,
         settingsRepository.conversionSettingsFlow,
-    ) { theme, interaction, conversion ->
-        SettingsUiState(theme, interaction, conversion)
+        settingsRepository.saveDiagnosticsEnabledFlow,
+    ) { theme, interaction, conversion, saveDiagnostics ->
+        SettingsUiState(theme, interaction, conversion, saveDiagnostics)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
+    
+    fun setSaveDiagnosticsEnabled(enabled: Boolean) { 
+        com.markdrop.app.diagnostics.PipelineTrace.isDiagnosticsEnabled = enabled
+        viewModelScope.launch { settingsRepository.setSaveDiagnosticsEnabled(enabled) } 
+    }
     
     fun setThemeMode(mode: ThemeMode) { viewModelScope.launch { settingsRepository.setThemeMode(mode) } }
     fun setSeedColor(hex: String) { viewModelScope.launch { settingsRepository.setSeedColor(hex) } }

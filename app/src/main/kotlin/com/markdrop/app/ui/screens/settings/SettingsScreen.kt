@@ -258,6 +258,47 @@ fun SettingsScreen(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
+            // Developer & Diagnostics Section
+            Text(
+                text = "Developer & Diagnostics",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+
+            ListItem(
+                headlineContent = { Text("Save Diagnostics") },
+                supportingContent = { Text("Record per-page input images, metadata, and raw responses for troubleshooting") },
+                trailingContent = {
+                    Switch(
+                        checked = uiState.saveDiagnosticsEnabled,
+                        onCheckedChange = { viewModel.setSaveDiagnosticsEnabled(it) }
+                    )
+                }
+            )
+
+            ListItem(
+                headlineContent = { Text("Export Last Job Diagnostics (ZIP)") },
+                supportingContent = { Text("Share diagnostic archive containing traces and bitmaps") },
+                trailingContent = {
+                    FilledTonalButton(
+                        onClick = {
+                            val exportRes = com.markdrop.app.diagnostics.DiagnosticsExporter.exportLastJobDiagnostics(context)
+                            if (exportRes.isSuccess) {
+                                val intent = com.markdrop.app.diagnostics.DiagnosticsExporter.shareDiagnosticsZip(context, exportRes.getOrThrow())
+                                context.startActivity(android.content.Intent.createChooser(intent, "Share Diagnostics Archive"))
+                            } else {
+                                android.widget.Toast.makeText(context, exportRes.exceptionOrNull()?.message ?: "No diagnostics to export", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    ) {
+                        Text("Export")
+                    }
+                }
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
             // About Section
             Text(
                 text = "About",
