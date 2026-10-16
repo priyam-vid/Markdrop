@@ -97,17 +97,11 @@ object HeuristicMarkdownFormatter {
         val isTwoColumn = leftColumnBlocks.size >= 2 && rightColumnBlocks.size >= 2 &&
                 (leftColumnBlocks.size + rightColumnBlocks.size) >= (blocks.size * 0.6)
 
+        val bandTolerance = (medianHeight * 0.75).toInt().coerceAtLeast(8)
+        val comparator = ReadingOrderComparator(bandTolerance)
+
         if (!isTwoColumn) {
-            val bandTolerance = (medianHeight * 0.75).toInt().coerceAtLeast(8)
-            return blocks.sortedWith { b1, b2 ->
-                val top1 = b1.boundingBox?.top ?: 0
-                val top2 = b2.boundingBox?.top ?: 0
-                if (abs(top1 - top2) <= bandTolerance) {
-                    (b1.boundingBox?.left ?: 0).compareTo(b2.boundingBox?.left ?: 0)
-                } else {
-                    top1.compareTo(top2)
-                }
-            }
+            return blocks.sortedWith(comparator)
         }
 
         // Two-column layout: Spanning headers first, then left col top-to-bottom, right col top-to-bottom, spanning footers
@@ -118,11 +112,11 @@ object HeuristicMarkdownFormatter {
                 rightColumnBlocks.minOfOrNull { b -> b.boundingBox?.top ?: 0 } ?: Int.MAX_VALUE
             )
             top < minColTop
-        }.sortedBy { it.boundingBox?.top ?: 0 }
+        }.sortedWith(comparator)
 
-        val bottomSpanning = spanningBlocks.filter { it !in topSpanning }.sortedBy { it.boundingBox?.top ?: 0 }
-        val sortedLeft = leftColumnBlocks.sortedBy { it.boundingBox?.top ?: 0 }
-        val sortedRight = rightColumnBlocks.sortedBy { it.boundingBox?.top ?: 0 }
+        val bottomSpanning = spanningBlocks.filter { it !in topSpanning }.sortedWith(comparator)
+        val sortedLeft = leftColumnBlocks.sortedWith(comparator)
+        val sortedRight = rightColumnBlocks.sortedWith(comparator)
 
         return topSpanning + sortedLeft + sortedRight + bottomSpanning
     }

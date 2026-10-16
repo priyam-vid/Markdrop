@@ -29,10 +29,11 @@ enum class CloudProvider(
     ANTHROPIC(
         displayName = "Anthropic Claude",
         keyPageUrl = "https://console.anthropic.com/settings/keys",
-        defaultModel = "claude-3-5-sonnet-20241022",
+        defaultModel = "claude-3-7-sonnet-20250219",
         availableModels = listOf(
-            "claude-3-5-sonnet-20241022",
-            "claude-3-5-haiku-20241022"
+            "claude-3-7-sonnet-20250219",
+            "claude-3-5-sonnet-latest",
+            "claude-3-5-haiku-latest"
         )
     ),
     OPENROUTER(
@@ -42,6 +43,7 @@ enum class CloudProvider(
         availableModels = listOf(
             "google/gemini-2.5-flash",
             "google/gemini-2.5-pro",
+            "anthropic/claude-3.7-sonnet",
             "anthropic/claude-3.5-sonnet",
             "openai/gpt-4o-mini"
         )

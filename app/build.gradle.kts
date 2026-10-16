@@ -116,6 +116,7 @@ dependencies {
 
     // MediaPipe Tasks GenAI
     implementation(libs.mediapipe.tasks.genai)
+    implementation(libs.mediapipe.tasks.core)
 
     // Kotlinx
     implementation(libs.kotlinx.serialization.json)

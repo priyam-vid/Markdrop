@@ -113,22 +113,28 @@ class ModelManager(
 
     fun isValidZipHeader(file: File): Boolean = LiteRtArchiveValidator.isValidZipHeader(file)
 
+    private val readinessCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
     fun hasSentencePieceTokenizer(file: File): Boolean = LiteRtArchiveValidator.hasSentencePieceTokenizer(file)
 
     fun isModelReady(manifest: ModelManifest): Boolean {
         val file = getModelFile(manifest)
-        if (!file.exists() || file.length() == 0L) return false
-        val isArchive = file.name.endsWith(".task", ignoreCase = true) || file.name.endsWith(".litertlm", ignoreCase = true)
-        if (isArchive) {
-            val validation = LiteRtArchiveValidator.validate(file)
-            if (!validation.isValid) {
-                if (!validation.hasValidZipHeader) {
-                    file.delete()
-                }
-                return false
-            }
+        if (!file.exists() || file.length() == 0L) {
+            readinessCache[manifest.modelId] = false
+            return false
         }
-        return true
+        val cached = readinessCache[manifest.modelId]
+        if (cached != null) return cached
+
+        val isArchive = file.name.endsWith(".task", ignoreCase = true) || file.name.endsWith(".litertlm", ignoreCase = true)
+        val ready = if (isArchive) {
+            val validation = LiteRtArchiveValidator.validate(file)
+            validation.isValid
+        } else {
+            true
+        }
+        readinessCache[manifest.modelId] = ready
+        return ready
     }
 
     fun getModelPath(manifest: ModelManifest): String = getModelFile(manifest).absolutePath
@@ -937,6 +943,7 @@ class ModelManager(
 
     fun deleteModel(manifest: ModelManifest): Boolean {
         cancelDownload()
+        readinessCache.remove(manifest.modelId)
         val taskFile = File(modelsDir, "${manifest.modelId}.task")
         val litertlmFile = File(modelsDir, "${manifest.modelId}.litertlm")
         val deleted1 = if (taskFile.exists()) taskFile.delete() else false

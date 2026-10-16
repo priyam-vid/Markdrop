@@ -66,6 +66,7 @@ androidx-room-compiler = { group = "androidx.room", name = "room-compiler", vers
 
 # MediaPipe GenAI
 mediapipe-tasks-genai = { group = "com.google.mediapipe", name = "tasks-genai", version.ref = "mediapipeGenai" }
+mediapipe-tasks-core = { group = "com.google.mediapipe", name = "tasks-core", version = "0.10.20" }
 
 # Haze (glassmorphism)
 haze = { group = "dev.chrisbanes.haze", name = "haze", version.ref = "haze" }

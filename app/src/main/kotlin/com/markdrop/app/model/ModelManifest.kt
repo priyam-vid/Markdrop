@@ -105,6 +105,12 @@ data class HfTreeItem(
 )
 
 @Serializable
+data class ModelCapabilities(
+    val vision: Boolean = false,
+    val audio: Boolean = false
+)
+
+@Serializable
 data class ModelManifest(
     val modelId: String,
     val displayName: String,
@@ -113,10 +119,12 @@ data class ModelManifest(
     val fileSizeBytes: Long,
     val checksumSha256: String = "",
     val minRamGb: Int = 6,
-    val quantization: String = "int4"
+    val quantization: String = "int4",
+    val capabilities: ModelCapabilities = ModelCapabilities(vision = false)
 ) {
     val downloadUrl: String get() = assetConfig.buildDownloadUrl()
     val mirrors: List<RepositoryTarget> get() = assetConfig.mirrors
+    val supportsVision: Boolean get() = capabilities.vision
 }
 
 object DefaultModelManifest {
@@ -149,7 +157,8 @@ object DefaultModelManifest {
             fileSizeBytes = 2_770_000_000L,
             checksumSha256 = "",
             minRamGb = 8,
-            quantization = "int4"
+            quantization = "int4",
+            capabilities = ModelCapabilities(vision = true)
         ),
         ModelManifest(
             modelId = "gemma-3n-E2B-it",
@@ -178,7 +187,8 @@ object DefaultModelManifest {
             fileSizeBytes = 3_919_000_000L,
             checksumSha256 = "",
             minRamGb = 8,
-            quantization = "int4"
+            quantization = "int4",
+            capabilities = ModelCapabilities(vision = true)
         ),
         ModelManifest(
             modelId = "gemma3-270m-it",
@@ -198,7 +208,8 @@ object DefaultModelManifest {
             fileSizeBytes = 303_950_933L,
             checksumSha256 = "",
             minRamGb = 3,
-            quantization = "q8"
+            quantization = "q8",
+            capabilities = ModelCapabilities(vision = false)
         ),
         ModelManifest(
             modelId = "gemma2-2b-it-int4",
@@ -219,7 +230,8 @@ object DefaultModelManifest {
             fileSizeBytes = 2_702_868_915L,
             checksumSha256 = "",
             minRamGb = 6,
-            quantization = "q8"
+            quantization = "q8",
+            capabilities = ModelCapabilities(vision = false)
         ),
         ModelManifest(
             modelId = "gemma3-4b-it-int4",
@@ -249,7 +261,8 @@ object DefaultModelManifest {
             fileSizeBytes = 5_270_000_000L,
             checksumSha256 = "",
             minRamGb = 8,
-            quantization = "int4"
+            quantization = "int4",
+            capabilities = ModelCapabilities(vision = true)
         )
     )
 

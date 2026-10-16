@@ -2,9 +2,16 @@ package com.markdrop.app.conversion.local
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.tasks.genai.llminference.GraphOptions
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
+import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
 import com.markdrop.app.conversion.cloud.VisionPrompts
 import com.markdrop.app.model.LiteRtArchiveValidator
+import com.markdrop.app.model.ModelManifest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.Closeable
@@ -17,7 +24,8 @@ class IncompatibleTokenizerException(
 
 class LocalLlmEngine(
     private val context: Context,
-    private val modelPath: String
+    private val modelPath: String,
+    private val manifest: ModelManifest? = null
 ) : Closeable {
 
     private var llmInference: LlmInference? = null
@@ -25,27 +33,24 @@ class LocalLlmEngine(
 
     suspend fun initialize(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
+            if (manifest != null && !manifest.supportsVision) {
+                return@withContext Result.failure(
+                    IllegalStateException("Model '${manifest.displayName}' is text-only and does not support image transcription. Please select a vision-capable model.")
+                )
+            }
+
             val file = File(modelPath).absoluteFile
             if (!file.exists() || !file.canRead() || file.length() == 0L) {
                 return@withContext Result.failure(IllegalStateException("Model file not found or unreadable at: ${file.absolutePath}"))
             }
 
-            // Verify zip magic bytes and SentencePiece tokenizer for LiteRT tasks
             val isZipCandidate = file.name.endsWith(".task", ignoreCase = true) ||
                     file.name.endsWith(".litertlm", ignoreCase = true)
 
             if (isZipCandidate) {
                 val validation = LiteRtArchiveValidator.validate(file)
                 if (!validation.isValid) {
-                    if (!validation.hasValidZipHeader) {
-                        file.delete()
-                        return@withContext Result.failure(
-                            IllegalStateException(
-                                "Model archive at ${file.absolutePath} is corrupted or not a valid LiteRT task ZIP archive. Corrupt file has been removed; please re-download."
-                            )
-                        )
-                    }
-                    if (!validation.hasSentencePieceTokenizer) {
+                    if (!validation.hasSentencePieceTokenizer && validation.hasHfBpeTokenizer) {
                         return@withContext Result.failure(
                             IncompatibleTokenizerException(
                                 validation.errorMessage
@@ -54,14 +59,15 @@ class LocalLlmEngine(
                         )
                     }
                     return@withContext Result.failure(
-                        IllegalStateException(validation.errorMessage ?: "Invalid LiteRT task archive.")
+                        IllegalStateException(validation.errorMessage ?: "Invalid LiteRT model archive.")
                     )
                 }
             }
 
             val options = LlmInference.LlmInferenceOptions.builder()
                 .setModelPath(file.absolutePath)
-                .setMaxTokens(2048)
+                .setMaxTokens(4096)
+                .setMaxNumImages(1)
                 .setMaxTopK(40)
                 .build()
 
@@ -106,12 +112,39 @@ class LocalLlmEngine(
             initialize().getOrThrow()
         }
 
-        try {
-            val prompt = "${VisionPrompts.SYSTEM_INSTRUCTION}\n\n${VisionPrompts.PAGE_PROMPT}"
-            val response = llmInference?.generateResponse(prompt)
-                ?: throw IllegalStateException("Local AI model returned null response.")
+        val inference = llmInference
+            ?: throw IllegalStateException("Local AI engine is not initialized.")
 
-            response.trim()
+        try {
+            val graphOptions = GraphOptions.builder()
+                .setEnableVisionModality(true)
+                .build()
+
+            val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
+                .setGraphOptions(graphOptions)
+                .setTemperature(0.0f)
+                .build()
+
+            val session = LlmInferenceSession.createFromOptions(inference, sessionOptions)
+
+            try {
+                val mpImage = BitmapImageBuilder(bitmap).build()
+                try {
+                    session.addImage(mpImage)
+                } finally {
+                    mpImage.close()
+                }
+
+                val prompt = "${VisionPrompts.SYSTEM_INSTRUCTION}\n\n${VisionPrompts.PAGE_PROMPT}"
+                session.addQueryChunk(prompt)
+
+                val response = session.generateResponse()
+                    ?: throw IllegalStateException("Local AI model returned null response.")
+
+                response.trim()
+            } finally {
+                session.close()
+            }
         } catch (e: IncompatibleTokenizerException) {
             throw e
         } catch (e: Throwable) {
@@ -123,6 +156,40 @@ class LocalLlmEngine(
                 )
             }
             throw IllegalStateException("Local AI inference failed: ${e.localizedMessage}", e)
+        }
+    }
+
+    suspend fun runSmokeTest(): Result<Unit> = withContext(Dispatchers.Default) {
+        try {
+            if (!isInitialized || llmInference == null) {
+                initialize().getOrThrow()
+            }
+
+            val testBitmap = Bitmap.createBitmap(400, 100, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(testBitmap)
+            canvas.drawColor(Color.WHITE)
+            val paint = Paint().apply {
+                color = Color.BLACK
+                textSize = 32f
+                isAntiAlias = true
+            }
+            canvas.drawText("Hello Markdrop 123", 20f, 60f, paint)
+
+            val result = try {
+                transcribePage(testBitmap)
+            } finally {
+                testBitmap.recycle()
+            }
+
+            if (result.contains("Markdrop", ignoreCase = true) && result.contains("123")) {
+                Result.success(Unit)
+            } else {
+                Result.failure(
+                    IllegalStateException("Smoke test output did not contain expected text 'Markdrop' and '123'. Got: '$result'")
+                )
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 

@@ -1,6 +1,7 @@
 package com.markdrop.app.model
 
 import java.io.File
+import java.io.FileInputStream
 import java.util.zip.ZipFile
 
 data class LiteRtArchiveValidation(
@@ -34,14 +35,15 @@ object LiteRtArchiveValidator {
     }
 
     /**
-     * Inspects the ZIP archive to verify it contains a SentencePiece binary tokenizer (`tokenizer.model` or `*.spm`).
+     * Inspects the archive or container to verify it contains or supports SentencePiece tokenization.
      */
     fun hasSentencePieceTokenizer(file: File): Boolean {
         return validate(file).hasSentencePieceTokenizer
     }
 
     /**
-     * Performs a comprehensive manifest pre-check on a LiteRT `.task` or `.litertlm` archive.
+     * Performs a comprehensive read-only manifest pre-check on a LiteRT `.task` or `.litertlm` model file.
+     * NEVER modifies or deletes files on disk.
      */
     fun validate(file: File): LiteRtArchiveValidation {
         if (!file.exists() || file.length() < 4) {
@@ -55,7 +57,62 @@ object LiteRtArchiveValidator {
             )
         }
 
-        if (!isValidZipHeader(file)) {
+        val isLitertlm = file.name.endsWith(".litertlm", ignoreCase = true)
+        val hasZip = isValidZipHeader(file)
+
+        // Read first 512 bytes to verify it is not an HTML error or text pointer
+        val headerBytes = ByteArray(minOf(512, file.length().toInt()))
+        try {
+            FileInputStream(file).use { it.read(headerBytes) }
+            val headerStr = String(headerBytes, Charsets.UTF_8).lowercase()
+            if (headerStr.startsWith("<!doctype html") || headerStr.startsWith("<html")) {
+                return LiteRtArchiveValidation(
+                    isValid = false,
+                    hasValidZipHeader = false,
+                    hasSentencePieceTokenizer = false,
+                    hasHfBpeTokenizer = false,
+                    hasModelWeightsOrMetadata = false,
+                    errorMessage = "Server returned HTML error page instead of binary weights."
+                )
+            }
+            if (headerStr.startsWith("version https://git-lfs.github.com/spec/v1")) {
+                return LiteRtArchiveValidation(
+                    isValid = false,
+                    hasValidZipHeader = false,
+                    hasSentencePieceTokenizer = false,
+                    hasHfBpeTokenizer = false,
+                    hasModelWeightsOrMetadata = false,
+                    errorMessage = "Downloaded Git-LFS pointer instead of binary weights."
+                )
+            }
+        } catch (e: Exception) {
+            return LiteRtArchiveValidation(
+                isValid = false,
+                hasValidZipHeader = hasZip,
+                hasSentencePieceTokenizer = false,
+                hasHfBpeTokenizer = false,
+                hasModelWeightsOrMetadata = false,
+                errorMessage = "Failed to inspect model file header: ${e.localizedMessage}"
+            )
+        }
+
+        // Case 1: .litertlm format without ZIP header (native FlatBuffer bundle)
+        if (isLitertlm && !hasZip) {
+            val minSizeBytes = 50L * 1024 * 1024 // Models should be >= 50MB
+            val isSizePlausible = file.length() >= minSizeBytes
+            return LiteRtArchiveValidation(
+                isValid = isSizePlausible,
+                hasValidZipHeader = false,
+                hasSentencePieceTokenizer = true, // Native LiteRT-LM models manage tokenizers internally
+                hasHfBpeTokenizer = false,
+                hasModelWeightsOrMetadata = true,
+                entriesSummary = listOf("native_litertlm_flatbuffer"),
+                errorMessage = if (!isSizePlausible) "File size (${file.length()} bytes) is suspiciously small for a LiteRT-LM model." else null
+            )
+        }
+
+        // Case 2: ZIP-based archive (.task or ZIP-bundled .litertlm)
+        if (!hasZip) {
             return LiteRtArchiveValidation(
                 isValid = false,
                 hasValidZipHeader = false,
@@ -104,11 +161,12 @@ object LiteRtArchiveValidator {
             )
         }
 
-        val isValid = hasSpTokenizer && hasWeightsOrMetadata
+        // For .litertlm ZIPs or .task
+        val isValid = (hasSpTokenizer || isLitertlm) && hasWeightsOrMetadata
         val errorMsg = when {
             !hasSpTokenizer && hasBpeTokenizer ->
                 "Incompatible Tokenizer: This model uses a Hugging Face BPE tokenizer. LiteRT on Android currently requires SentencePiece-based models (such as PaliGemma or Gemma)."
-            !hasSpTokenizer ->
+            !hasSpTokenizer && !isLitertlm ->
                 "Archive missing SentencePiece tokenizer (tokenizer.model or *.spm)."
             !hasWeightsOrMetadata ->
                 "Archive missing model weights or metadata flatbuffer (*.tflite, *.bin, metadata.json)."
@@ -118,7 +176,7 @@ object LiteRtArchiveValidator {
         return LiteRtArchiveValidation(
             isValid = isValid,
             hasValidZipHeader = true,
-            hasSentencePieceTokenizer = hasSpTokenizer,
+            hasSentencePieceTokenizer = hasSpTokenizer || isLitertlm,
             hasHfBpeTokenizer = hasBpeTokenizer,
             hasModelWeightsOrMetadata = hasWeightsOrMetadata,
             entriesSummary = entries,

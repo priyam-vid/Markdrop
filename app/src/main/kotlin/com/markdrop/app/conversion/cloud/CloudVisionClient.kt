@@ -17,6 +17,8 @@ import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.util.concurrent.TimeUnit
 import android.util.Base64
+import android.util.Log
+import kotlinx.coroutines.delay
 
 class CloudVisionClient : Closeable {
 
@@ -55,25 +57,59 @@ class CloudVisionClient : Closeable {
         }
     }
 
+    private fun createTestBitmap(): Bitmap {
+        return Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(android.graphics.Color.WHITE)
+        }
+    }
+
+    private suspend fun postWithRetry(
+        url: String,
+        builder: HttpRequestBuilder.() -> Unit
+    ): io.ktor.client.statement.HttpResponse {
+        val maxRetries = 3
+        var attempt = 0
+        while (true) {
+            val response = httpClient.post(url, builder)
+            if (response.status == HttpStatusCode.TooManyRequests && attempt < maxRetries) {
+                attempt++
+                val retryAfterSec = response.headers["Retry-After"]?.toLongOrNull() ?: (1L shl attempt)
+                val delayMs = (retryAfterSec.coerceIn(1, 60)) * 1000L
+                Log.w("CloudVisionClient", "429 Rate limited. Waiting ${delayMs}ms before retry $attempt of $maxRetries")
+                delay(delayMs)
+                continue
+            }
+            return response
+        }
+    }
+
     suspend fun testConnection(
         provider: CloudProvider,
         apiKey: String,
         model: String
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
+            val testBase64 = bitmapToBase64(createTestBitmap())
             val response = when (provider) {
                 CloudProvider.GEMINI -> {
-                    val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+                    val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
                     val requestBody = buildJsonObject {
                         putJsonArray("contents") {
                             addJsonObject {
                                 putJsonArray("parts") {
                                     addJsonObject { put("text", VisionPrompts.CONNECTION_TEST_PROMPT) }
+                                    addJsonObject {
+                                        putJsonObject("inline_data") {
+                                            put("mime_type", "image/jpeg")
+                                            put("data", testBase64)
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
-                    val httpResponse = httpClient.post(url) {
+                    val httpResponse = postWithRetry(url) {
+                        header("x-goog-api-key", apiKey)
                         contentType(ContentType.Application.Json)
                         setBody(requestBody.toString())
                     }
@@ -81,7 +117,7 @@ class CloudVisionClient : Closeable {
                     else "Error ${httpResponse.status}: ${httpResponse.bodyAsText().take(200)}"
                 }
                 CloudProvider.OPENAI -> {
-                    val httpResponse = httpClient.post("https://api.openai.com/v1/chat/completions") {
+                    val httpResponse = postWithRetry("https://api.openai.com/v1/chat/completions") {
                         header("Authorization", "Bearer $apiKey")
                         contentType(ContentType.Application.Json)
                         setBody(buildJsonObject {
@@ -89,17 +125,33 @@ class CloudVisionClient : Closeable {
                             putJsonArray("messages") {
                                 addJsonObject {
                                     put("role", "user")
-                                    put("content", VisionPrompts.CONNECTION_TEST_PROMPT)
+                                    putJsonArray("content") {
+                                        addJsonObject {
+                                            put("type", "text")
+                                            put("text", VisionPrompts.CONNECTION_TEST_PROMPT)
+                                        }
+                                        addJsonObject {
+                                            put("type", "image_url")
+                                            putJsonObject("image_url") {
+                                                put("url", "data:image/jpeg;base64,$testBase64")
+                                                put("detail", "low")
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                            put("max_tokens", 10)
+                            if (model.startsWith("o1") || model.startsWith("o3")) {
+                                put("max_completion_tokens", 10)
+                            } else {
+                                put("max_tokens", 10)
+                            }
                         }.toString())
                     }
                     if (httpResponse.status.value in 200..299) "Connected successfully!"
                     else "Error ${httpResponse.status}: ${httpResponse.bodyAsText().take(200)}"
                 }
                 CloudProvider.ANTHROPIC -> {
-                    val httpResponse = httpClient.post("https://api.anthropic.com/v1/messages") {
+                    val httpResponse = postWithRetry("https://api.anthropic.com/v1/messages") {
                         header("x-api-key", apiKey)
                         header("anthropic-version", "2023-06-01")
                         contentType(ContentType.Application.Json)
@@ -109,7 +161,20 @@ class CloudVisionClient : Closeable {
                             putJsonArray("messages") {
                                 addJsonObject {
                                     put("role", "user")
-                                    put("content", VisionPrompts.CONNECTION_TEST_PROMPT)
+                                    putJsonArray("content") {
+                                        addJsonObject {
+                                            put("type", "image")
+                                            putJsonObject("source") {
+                                                put("type", "base64")
+                                                put("media_type", "image/jpeg")
+                                                put("data", testBase64)
+                                            }
+                                        }
+                                        addJsonObject {
+                                            put("type", "text")
+                                            put("text", VisionPrompts.CONNECTION_TEST_PROMPT)
+                                        }
+                                    }
                                 }
                             }
                         }.toString())
@@ -118,7 +183,7 @@ class CloudVisionClient : Closeable {
                     else "Error ${httpResponse.status}: ${httpResponse.bodyAsText().take(200)}"
                 }
                 CloudProvider.OPENROUTER -> {
-                    val httpResponse = httpClient.post("https://openrouter.ai/api/v1/chat/completions") {
+                    val httpResponse = postWithRetry("https://openrouter.ai/api/v1/chat/completions") {
                         header("Authorization", "Bearer $apiKey")
                         header("HTTP-Referer", "https://markdrop.app")
                         header("X-Title", "Markdrop")
@@ -128,7 +193,19 @@ class CloudVisionClient : Closeable {
                             putJsonArray("messages") {
                                 addJsonObject {
                                     put("role", "user")
-                                    put("content", VisionPrompts.CONNECTION_TEST_PROMPT)
+                                    putJsonArray("content") {
+                                        addJsonObject {
+                                            put("type", "text")
+                                            put("text", VisionPrompts.CONNECTION_TEST_PROMPT)
+                                        }
+                                        addJsonObject {
+                                            put("type", "image_url")
+                                            putJsonObject("image_url") {
+                                                put("url", "data:image/jpeg;base64,$testBase64")
+                                                put("detail", "low")
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             put("max_tokens", 10)
@@ -145,7 +222,7 @@ class CloudVisionClient : Closeable {
     }
 
     private suspend fun callGeminiVision(base64Image: String, apiKey: String, model: String): String {
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
         val payload = buildJsonObject {
             putJsonObject("system_instruction") {
                 putJsonArray("parts") {
@@ -165,9 +242,14 @@ class CloudVisionClient : Closeable {
                     }
                 }
             }
+            putJsonObject("generationConfig") {
+                put("temperature", 0.0)
+                put("maxOutputTokens", 4096)
+            }
         }
 
-        val response = httpClient.post(url) {
+        val response = postWithRetry(url) {
+            header("x-goog-api-key", apiKey)
             contentType(ContentType.Application.Json)
             setBody(payload.toString())
         }
@@ -179,9 +261,15 @@ class CloudVisionClient : Closeable {
 
         val json = jsonConfig.parseToJsonElement(responseText).jsonObject
         val candidate = json["candidates"]?.jsonArray?.firstOrNull()?.jsonObject
+        val finishReason = candidate?.get("finishReason")?.jsonPrimitive?.contentOrNull
+        if (finishReason == "MAX_TOKENS") {
+            Log.w("CloudVisionClient", "Gemini output truncated due to max output tokens")
+        }
+
         val text = candidate?.get("content")?.jsonObject
-            ?.get("parts")?.jsonArray?.firstOrNull()?.jsonObject
-            ?.get("text")?.jsonPrimitive?.contentOrNull
+            ?.get("parts")?.jsonArray
+            ?.mapNotNull { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull }
+            ?.joinToString("")
 
         return text?.cleanMarkdownOutput() ?: throw IllegalStateException("Empty response from Gemini")
     }
@@ -190,6 +278,7 @@ class CloudVisionClient : Closeable {
         val endpoint = if (isCustomEndpoint) "https://openrouter.ai/api/v1/chat/completions" else "https://api.openai.com/v1/chat/completions"
         val payload = buildJsonObject {
             put("model", model)
+            put("temperature", 0.0)
             putJsonArray("messages") {
                 addJsonObject {
                     put("role", "system")
@@ -212,10 +301,14 @@ class CloudVisionClient : Closeable {
                     }
                 }
             }
-            put("max_tokens", 4096)
+            if (!isCustomEndpoint && (model.startsWith("o1") || model.startsWith("o3"))) {
+                put("max_completion_tokens", 4096)
+            } else {
+                put("max_tokens", 4096)
+            }
         }
 
-        val response = httpClient.post(endpoint) {
+        val response = postWithRetry(endpoint) {
             header("Authorization", "Bearer $apiKey")
             if (isCustomEndpoint) {
                 header("HTTP-Referer", "https://markdrop.app")
@@ -232,6 +325,10 @@ class CloudVisionClient : Closeable {
 
         val json = jsonConfig.parseToJsonElement(responseText).jsonObject
         val choice = json["choices"]?.jsonArray?.firstOrNull()?.jsonObject
+        val finishReason = choice?.get("finish_reason")?.jsonPrimitive?.contentOrNull
+        if (finishReason == "length") {
+            Log.w("CloudVisionClient", "OpenAI/OpenRouter output truncated due to max tokens")
+        }
         val text = choice?.get("message")?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull
 
         return text?.cleanMarkdownOutput() ?: throw IllegalStateException("Empty response from provider")
@@ -242,6 +339,7 @@ class CloudVisionClient : Closeable {
         val payload = buildJsonObject {
             put("model", model)
             put("max_tokens", 4096)
+            put("temperature", 0.0)
             put("system", VisionPrompts.SYSTEM_INSTRUCTION)
             putJsonArray("messages") {
                 addJsonObject {
@@ -264,7 +362,7 @@ class CloudVisionClient : Closeable {
             }
         }
 
-        val response = httpClient.post(endpoint) {
+        val response = postWithRetry(endpoint) {
             header("x-api-key", apiKey)
             header("anthropic-version", "2023-06-01")
             contentType(ContentType.Application.Json)
@@ -277,6 +375,10 @@ class CloudVisionClient : Closeable {
         }
 
         val json = jsonConfig.parseToJsonElement(responseText).jsonObject
+        val stopReason = json["stop_reason"]?.jsonPrimitive?.contentOrNull
+        if (stopReason == "max_tokens") {
+            Log.w("CloudVisionClient", "Anthropic output truncated due to max tokens")
+        }
         val contentArray = json["content"]?.jsonArray
         val textBlock = contentArray?.firstOrNull { it.jsonObject["type"]?.jsonPrimitive?.contentOrNull == "text" }
         val text = textBlock?.jsonObject?.get("text")?.jsonPrimitive?.contentOrNull
@@ -286,7 +388,7 @@ class CloudVisionClient : Closeable {
 
     private fun bitmapToBase64(bitmap: Bitmap): String {
         val outputStream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 95, outputStream)
         val byteArray = outputStream.toByteArray()
         return Base64.encodeToString(byteArray, Base64.NO_WRAP)
     }
@@ -311,8 +413,10 @@ class CloudVisionClient : Closeable {
             val pricingMap = mutableMapOf<String, Double>()
             val models = when (provider) {
                 CloudProvider.GEMINI -> {
-                    val url = "https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey"
-                    val response = httpClient.get(url)
+                    val url = "https://generativelanguage.googleapis.com/v1beta/models"
+                    val response = httpClient.get(url) {
+                        header("x-goog-api-key", apiKey)
+                    }
                     if (response.status.value !in 200..299) {
                         throw IllegalStateException("Gemini API error ${response.status}: ${response.bodyAsText().take(120)}")
                     }
@@ -431,7 +535,7 @@ class CloudVisionClient : Closeable {
 
         when (provider) {
             CloudProvider.GEMINI -> {
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
                 val payload = buildJsonObject {
                     putJsonArray("contents") {
                         addJsonObject {
@@ -441,7 +545,8 @@ class CloudVisionClient : Closeable {
                         }
                     }
                 }
-                val response = httpClient.post(url) {
+                val response = postWithRetry(url) {
+                    header("x-goog-api-key", apiKey)
                     contentType(ContentType.Application.Json)
                     setBody(payload.toString())
                 }
@@ -495,22 +600,25 @@ class CloudVisionClient : Closeable {
     }
 
     private fun String.cleanMarkdownOutput(): String {
-        var trimmed = this.trim()
-        if (trimmed.startsWith("```markdown", ignoreCase = true)) {
-            trimmed = trimmed.removePrefix("```markdown").removePrefix("```MARKDOWN").trim()
-            if (trimmed.endsWith("```")) {
-                trimmed = trimmed.removeSuffix("```").trim()
-            }
-        } else if (trimmed.startsWith("```")) {
-            trimmed = trimmed.removePrefix("```").trim()
-            if (trimmed.endsWith("```")) {
-                trimmed = trimmed.removeSuffix("```").trim()
-            }
-        }
-        return trimmed
+        return cleanMarkdownOuterWrapper(this)
     }
 
     override fun close() {
         httpClient.close()
+    }
+}
+
+/**
+ * Strips outer markdown code fences IF AND ONLY IF they enclose the entire response.
+ * Legitimate code fences within the document or at the top of a page (without an enclosing wrapper)
+ * are carefully preserved.
+ */
+fun cleanMarkdownOuterWrapper(text: String): String {
+    val trimmed = text.trim()
+    val match = Regex("""^```(?:markdown)?\r?\n([\s\S]*?)\r?\n```$""", RegexOption.IGNORE_CASE).matchEntire(trimmed)
+    return if (match != null) {
+        match.groupValues[1].trim()
+    } else {
+        trimmed
     }
 }

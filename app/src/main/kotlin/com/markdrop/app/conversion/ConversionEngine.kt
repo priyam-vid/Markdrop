@@ -11,10 +11,11 @@ import com.markdrop.app.conversion.ocr.OcrPageResult
 import com.markdrop.app.conversion.pdf.PdfPageRenderer
 import com.markdrop.app.data.security.SecureKeyStore
 import com.markdrop.app.model.DefaultModelManifest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 
@@ -62,7 +63,7 @@ class ConversionEngine(
             val ocrPages = mutableListOf<OcrPageResult>()
 
             pagesToProcess.forEachIndexed { progressIndex, pageIndex ->
-                if (!coroutineContext.isActive) return@forEachIndexed
+                coroutineContext.ensureActive()
 
                 onProgress(progressIndex + 1, totalPages, "Extracting page ${progressIndex + 1} of $totalPages via OCR...")
 
@@ -129,7 +130,7 @@ class ConversionEngine(
             val pageMarkdowns = mutableListOf<String>()
 
             pagesToProcess.forEachIndexed { progressIndex, pageIndex ->
-                if (!coroutineContext.isActive) return@forEachIndexed
+                coroutineContext.ensureActive()
                 onProgress(progressIndex + 1, totalPages, "Intelligent routing page ${progressIndex + 1} of $totalPages...")
 
                 val bitmap = pdfRenderer.renderPageToBitmap(pageIndex, scaleFactor = 2.0f)
@@ -224,7 +225,7 @@ class ConversionEngine(
             var processedCount = 0
 
             for (chunk in pageChunks) {
-                if (!coroutineContext.isActive) break
+                coroutineContext.ensureActive()
                 val startPage = chunk.first() + 1
                 val endPage = chunk.last() + 1
                 val batchMsg = if (totalPages > 3 && chunk.size > 1) {
@@ -234,7 +235,7 @@ class ConversionEngine(
                 }
 
                 for (pageIndex in chunk) {
-                    if (!coroutineContext.isActive) break
+                    coroutineContext.ensureActive()
                     processedCount++
                     onProgress(processedCount, totalPages, batchMsg)
 
@@ -242,19 +243,22 @@ class ConversionEngine(
                     var attempts = 0
                     var pageMarkdown: String? = null
 
-                    while (attempts < 2 && pageMarkdown == null) {
-                        try {
-                            attempts++
-                            pageMarkdown = client.transcribePage(bitmap, provider, apiKey, model)
-                        } catch (e: Exception) {
-                            if (attempts >= 2) throw e
-                            delay(1000) // Brief backoff before retry
-                        } finally {
-                            bitmap.recycle()
+                    try {
+                        while (attempts < 2 && pageMarkdown == null) {
+                            try {
+                                attempts++
+                                pageMarkdown = client.transcribePage(bitmap, provider, apiKey, model)
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
+                                if (attempts >= 2) throw e
+                                delay(1000) // Brief backoff before retry
+                            }
                         }
-                    }
-                    if (pageMarkdown != null) {
-                        pageMarkdowns.add(pageMarkdown)
+                        if (pageMarkdown != null) {
+                            pageMarkdowns.add(pageMarkdown)
+                        }
+                    } finally {
+                        bitmap.recycle()
                     }
                 }
             }
@@ -310,7 +314,7 @@ class ConversionEngine(
             val pageMarkdowns = mutableListOf<String>()
 
             pagesToProcess.forEachIndexed { progressIndex, pageIndex ->
-                if (!coroutineContext.isActive) return@forEachIndexed
+                coroutineContext.ensureActive()
 
                 onProgress(progressIndex + 1, totalPages, "Inferring page ${progressIndex + 1} of $totalPages via local AI...")
 
