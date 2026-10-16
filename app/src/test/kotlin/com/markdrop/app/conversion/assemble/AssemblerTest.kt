@@ -64,7 +64,7 @@ class AssemblerTest {
         val page2 = "were reproducible across multiple independent trials."
 
         val assembled = Assembler.assemble(listOf(page1, page2))
-        assertEquals("We investigated whether the experimental conditions were reproducible across multiple independent trials.", assembled)
+        assertEquals("We investigated whether the experimental conditions <!-- page: 2 --> were reproducible across multiple independent trials.", assembled)
     }
 
     @Test
@@ -73,7 +73,7 @@ class AssemblerTest {
         val page2 = "In section 2, we present secondary outcomes."
 
         val assembled = Assembler.assemble(listOf(page1, page2))
-        assertTrue(assembled.contains("---"))
+        assertTrue(assembled.contains("<!-- page: 2 -->"))
         assertTrue(assembled.contains(page1))
         assertTrue(assembled.contains(page2))
     }

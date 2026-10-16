@@ -260,7 +260,7 @@ class ConversionPipeline(
             val rawPages = allResults.map { it.markdown ?: "" }
 
             val stripEnabled = app.settingsRepository.stripHeaderFooterEnabledFlow.first()
-            val cleanedPages = if (stripEnabled) HeaderFooterCleaner.cleanPages(rawPages) else rawPages
+            val cleanedPages = if (stripEnabled && !isAiMode) HeaderFooterCleaner.cleanPages(rawPages) else rawPages
             val finalMarkdown = Assembler.assemble(cleanedPages)
 
             val duration = System.currentTimeMillis() - startTime

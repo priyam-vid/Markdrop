@@ -677,10 +677,20 @@ private fun SplitPaneWorkspace(
         val lines = markdown.lines()
         var currentPageIdx = 0
         var hasHeadingOnCurrentPage = false
+        val pageCommentRegex = Regex("""<!--\s*page:\s*(\d+)\s*-->""")
 
         for (line in lines) {
             val trimmed = line.trim()
-            if (trimmed == "---") {
+            val pageMatch = pageCommentRegex.find(trimmed)
+            if (pageMatch != null) {
+                val parsedPageNum = pageMatch.groupValues[1].toIntOrNull()
+                if (parsedPageNum != null) {
+                    currentPageIdx = (parsedPageNum - 1).coerceAtLeast(0)
+                    hasHeadingOnCurrentPage = false
+                    list.add(DocumentSection("Page $parsedPageNum", currentPageIdx, 1))
+                    continue
+                }
+            } else if (trimmed == "---") {
                 if (!hasHeadingOnCurrentPage) {
                     list.add(DocumentSection("Page ${currentPageIdx + 1}", currentPageIdx, 1))
                 }
@@ -700,8 +710,8 @@ private fun SplitPaneWorkspace(
                 }
             }
         }
-        if (!hasHeadingOnCurrentPage) {
-            list.add(DocumentSection("Page ${currentPageIdx + 1}", currentPageIdx, 1))
+        if (list.isEmpty()) {
+            list.add(DocumentSection("Page 1", 0, 1))
         }
         list
     }

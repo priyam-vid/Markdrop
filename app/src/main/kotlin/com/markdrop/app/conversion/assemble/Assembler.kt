@@ -24,6 +24,7 @@ object Assembler {
         for (i in 1 until nonBlankPages.size) {
             val prevPage = merged.last()
             val currPage = nonBlankPages[i].trim()
+            val pageNum = i + 1
 
             // 1. Check for split table across page boundary
             val tableMergeResult = tryMergeSplitTable(prevPage, currPage)
@@ -33,17 +34,17 @@ object Assembler {
             }
 
             // 2. Check for split paragraph across page boundary
-            val paragraphMergeResult = tryMergeSplitParagraph(prevPage, currPage)
+            val paragraphMergeResult = tryMergeSplitParagraph(prevPage, currPage, pageNum)
             if (paragraphMergeResult != null) {
                 merged[merged.lastIndex] = paragraphMergeResult
                 continue
             }
 
-            // Standard page separation
-            merged.add(currPage)
+            // Standard page separation: emit page comment marker
+            merged.add("<!-- page: $pageNum -->\n\n$currPage")
         }
 
-        val joined = merged.joinToString("\n\n---\n\n")
+        val joined = merged.joinToString("\n\n")
         return normalizeHeadings(joined)
     }
 
@@ -83,7 +84,7 @@ object Assembler {
     /**
      * Checks if prevPage ends with a paragraph that continues on currPage.
      */
-    private fun tryMergeSplitParagraph(prevPage: String, currPage: String): String? {
+    private fun tryMergeSplitParagraph(prevPage: String, currPage: String, pageNum: Int): String? {
         val prevLines = prevPage.lines().dropLastWhile { it.isBlank() }
         val currLines = currPage.lines().dropWhile { it.isBlank() }
 
@@ -125,7 +126,7 @@ object Assembler {
             val mergedLastLine = if (lastPrevLine.endsWith("-") && firstChar.isLowerCase()) {
                 lastPrevLine.dropLast(1) + firstCurrLine
             } else {
-                "$lastPrevLine $firstCurrLine"
+                "$lastPrevLine <!-- page: $pageNum --> $firstCurrLine"
             }
             val remainingCurr = currLines.drop(1)
             return (prefix + listOf(mergedLastLine) + remainingCurr).joinToString("\n")
