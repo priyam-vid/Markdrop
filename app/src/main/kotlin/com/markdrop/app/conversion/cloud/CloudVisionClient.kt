@@ -20,6 +20,16 @@ import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.delay
 
+sealed class VisionException(message: String, cause: Throwable? = null) : RuntimeException(message, cause) {
+    class Auth(message: String) : VisionException(message)
+    class RateLimited(val retryAfterMs: Long, message: String) : VisionException(message)
+    class Overloaded(message: String) : VisionException(message)
+    class ContentBlocked(val reason: String) : VisionException("Content blocked by provider safety filters: $reason")
+    class Truncated(val partialText: String, message: String) : VisionException(message)
+    class Network(message: String, cause: Throwable? = null) : VisionException(message, cause)
+    class BadRequest(message: String) : VisionException(message)
+}
+
 class CloudVisionClient : Closeable {
 
     private val jsonConfig = Json {
@@ -45,15 +55,19 @@ class CloudVisionClient : Closeable {
         bitmap: Bitmap,
         provider: CloudProvider,
         apiKey: String,
-        model: String
+        model: String,
+        pageNumber: Int = 1,
+        totalPages: Int = 1,
+        previousTail: String? = null
     ): String = withContext(Dispatchers.IO) {
         val base64Image = bitmapToBase64(bitmap)
+        val userPrompt = VisionPrompts.buildUserPrompt(pageNumber, totalPages, previousTail)
 
         when (provider) {
-            CloudProvider.GEMINI -> callGeminiVision(base64Image, apiKey, model)
-            CloudProvider.OPENAI -> callOpenAiVision(base64Image, apiKey, model, isCustomEndpoint = false)
-            CloudProvider.ANTHROPIC -> callAnthropicVision(base64Image, apiKey, model)
-            CloudProvider.OPENROUTER -> callOpenAiVision(base64Image, apiKey, model, isCustomEndpoint = true)
+            CloudProvider.GEMINI -> callGeminiVision(base64Image, apiKey, model, userPrompt)
+            CloudProvider.OPENAI -> callOpenAiVision(base64Image, apiKey, model, userPrompt, isCustomEndpoint = false)
+            CloudProvider.ANTHROPIC -> callAnthropicVision(base64Image, apiKey, model, userPrompt)
+            CloudProvider.OPENROUTER -> callOpenAiVision(base64Image, apiKey, model, userPrompt, isCustomEndpoint = true)
         }
     }
 
@@ -67,19 +81,56 @@ class CloudVisionClient : Closeable {
         url: String,
         builder: HttpRequestBuilder.() -> Unit
     ): io.ktor.client.statement.HttpResponse {
-        val maxRetries = 3
+        val maxRetries = 4
         var attempt = 0
         while (true) {
-            val response = httpClient.post(url, builder)
-            if (response.status == HttpStatusCode.TooManyRequests && attempt < maxRetries) {
-                attempt++
-                val retryAfterSec = response.headers["Retry-After"]?.toLongOrNull() ?: (1L shl attempt)
-                val delayMs = (retryAfterSec.coerceIn(1, 60)) * 1000L
-                Log.w("CloudVisionClient", "429 Rate limited. Waiting ${delayMs}ms before retry $attempt of $maxRetries")
-                delay(delayMs)
-                continue
+            val response = try {
+                httpClient.post(url, builder)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (attempt < maxRetries) {
+                    attempt++
+                    val delayMs = (1000L shl attempt) + (0..500).random()
+                    Log.w("CloudVisionClient", "Network error: ${e.message}. Retrying in ${delayMs}ms ($attempt/$maxRetries)")
+                    delay(delayMs)
+                    continue
+                }
+                throw VisionException.Network("Network failure connecting to vision provider: ${e.message}", e)
             }
-            return response
+
+            when (response.status) {
+                HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden -> {
+                    val body = response.bodyAsText().take(200)
+                    throw VisionException.Auth("Authentication failed (${response.status.value}): $body")
+                }
+                HttpStatusCode.BadRequest -> {
+                    val body = response.bodyAsText().take(200)
+                    throw VisionException.BadRequest("Bad request error (${response.status.value}): $body")
+                }
+                HttpStatusCode.TooManyRequests -> {
+                    if (attempt < maxRetries) {
+                        attempt++
+                        val retryAfterSec = response.headers["Retry-After"]?.toLongOrNull() ?: (1L shl attempt)
+                        val delayMs = (retryAfterSec.coerceIn(1, 60)) * 1000L + (0..500).random()
+                        Log.w("CloudVisionClient", "429 Rate limited. Waiting ${delayMs}ms before retry $attempt of $maxRetries")
+                        delay(delayMs)
+                        continue
+                    }
+                    throw VisionException.RateLimited(60000L, "Rate limit exceeded after $maxRetries attempts")
+                }
+                HttpStatusCode.InternalServerError, HttpStatusCode.BadGateway,
+                HttpStatusCode.ServiceUnavailable, HttpStatusCode.GatewayTimeout -> {
+                    if (attempt < maxRetries) {
+                        attempt++
+                        val delayMs = (1000L shl attempt) + (0..500).random()
+                        Log.w("CloudVisionClient", "Provider overloaded (${response.status.value}). Waiting ${delayMs}ms before retry $attempt of $maxRetries")
+                        delay(delayMs)
+                        continue
+                    }
+                    throw VisionException.Overloaded("Provider server temporarily overloaded (${response.status.value})")
+                }
+                else -> return response
+            }
         }
     }
 
@@ -221,7 +272,13 @@ class CloudVisionClient : Closeable {
         }
     }
 
-    private suspend fun callGeminiVision(base64Image: String, apiKey: String, model: String): String {
+    private suspend fun callGeminiVision(
+        base64Image: String,
+        apiKey: String,
+        model: String,
+        userPrompt: String = VisionPrompts.PAGE_PROMPT,
+        maxTokens: Int = 4096
+    ): String {
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
         val payload = buildJsonObject {
             putJsonObject("system_instruction") {
@@ -232,7 +289,7 @@ class CloudVisionClient : Closeable {
             putJsonArray("contents") {
                 addJsonObject {
                     putJsonArray("parts") {
-                        addJsonObject { put("text", VisionPrompts.PAGE_PROMPT) }
+                        addJsonObject { put("text", userPrompt) }
                         addJsonObject {
                             putJsonObject("inline_data") {
                                 put("mime_type", "image/jpeg")
@@ -244,7 +301,7 @@ class CloudVisionClient : Closeable {
             }
             putJsonObject("generationConfig") {
                 put("temperature", 0.0)
-                put("maxOutputTokens", 4096)
+                put("maxOutputTokens", maxTokens)
             }
         }
 
@@ -260,10 +317,20 @@ class CloudVisionClient : Closeable {
         }
 
         val json = jsonConfig.parseToJsonElement(responseText).jsonObject
+        val blockReason = json["promptFeedback"]?.jsonObject?.get("blockReason")?.jsonPrimitive?.contentOrNull
+        if (blockReason != null) {
+            throw VisionException.ContentBlocked(blockReason)
+        }
+
         val candidate = json["candidates"]?.jsonArray?.firstOrNull()?.jsonObject
         val finishReason = candidate?.get("finishReason")?.jsonPrimitive?.contentOrNull
         if (finishReason == "MAX_TOKENS") {
-            Log.w("CloudVisionClient", "Gemini output truncated due to max output tokens")
+            if (maxTokens < 8192) {
+                Log.w("CloudVisionClient", "Gemini output truncated. Re-requesting with 8192 token limit...")
+                return callGeminiVision(base64Image, apiKey, model, userPrompt, maxTokens = 8192)
+            } else {
+                Log.w("CloudVisionClient", "Gemini output truncated at maximum 8192 token limit.")
+            }
         }
 
         val text = candidate?.get("content")?.jsonObject
@@ -274,7 +341,14 @@ class CloudVisionClient : Closeable {
         return text?.cleanMarkdownOutput() ?: throw IllegalStateException("Empty response from Gemini")
     }
 
-    private suspend fun callOpenAiVision(base64Image: String, apiKey: String, model: String, isCustomEndpoint: Boolean): String {
+    private suspend fun callOpenAiVision(
+        base64Image: String,
+        apiKey: String,
+        model: String,
+        userPrompt: String = VisionPrompts.PAGE_PROMPT,
+        isCustomEndpoint: Boolean,
+        maxTokens: Int = 4096
+    ): String {
         val endpoint = if (isCustomEndpoint) "https://openrouter.ai/api/v1/chat/completions" else "https://api.openai.com/v1/chat/completions"
         val payload = buildJsonObject {
             put("model", model)
@@ -289,7 +363,7 @@ class CloudVisionClient : Closeable {
                     putJsonArray("content") {
                         addJsonObject {
                             put("type", "text")
-                            put("text", VisionPrompts.PAGE_PROMPT)
+                            put("text", userPrompt)
                         }
                         addJsonObject {
                             put("type", "image_url")
@@ -302,9 +376,9 @@ class CloudVisionClient : Closeable {
                 }
             }
             if (!isCustomEndpoint && (model.startsWith("o1") || model.startsWith("o3"))) {
-                put("max_completion_tokens", 4096)
+                put("max_completion_tokens", maxTokens)
             } else {
-                put("max_tokens", 4096)
+                put("max_tokens", maxTokens)
             }
         }
 
@@ -327,18 +401,29 @@ class CloudVisionClient : Closeable {
         val choice = json["choices"]?.jsonArray?.firstOrNull()?.jsonObject
         val finishReason = choice?.get("finish_reason")?.jsonPrimitive?.contentOrNull
         if (finishReason == "length") {
-            Log.w("CloudVisionClient", "OpenAI/OpenRouter output truncated due to max tokens")
+            if (maxTokens < 8192) {
+                Log.w("CloudVisionClient", "OpenAI/OpenRouter output truncated. Re-requesting with 8192 token limit...")
+                return callOpenAiVision(base64Image, apiKey, model, userPrompt, isCustomEndpoint, maxTokens = 8192)
+            } else {
+                Log.w("CloudVisionClient", "OpenAI/OpenRouter output truncated at maximum 8192 token limit.")
+            }
         }
         val text = choice?.get("message")?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull
 
         return text?.cleanMarkdownOutput() ?: throw IllegalStateException("Empty response from provider")
     }
 
-    private suspend fun callAnthropicVision(base64Image: String, apiKey: String, model: String): String {
+    private suspend fun callAnthropicVision(
+        base64Image: String,
+        apiKey: String,
+        model: String,
+        userPrompt: String = VisionPrompts.PAGE_PROMPT,
+        maxTokens: Int = 4096
+    ): String {
         val endpoint = "https://api.anthropic.com/v1/messages"
         val payload = buildJsonObject {
             put("model", model)
-            put("max_tokens", 4096)
+            put("max_tokens", maxTokens)
             put("temperature", 0.0)
             put("system", VisionPrompts.SYSTEM_INSTRUCTION)
             putJsonArray("messages") {
@@ -355,7 +440,7 @@ class CloudVisionClient : Closeable {
                         }
                         addJsonObject {
                             put("type", "text")
-                            put("text", VisionPrompts.PAGE_PROMPT)
+                            put("text", userPrompt)
                         }
                     }
                 }
@@ -377,7 +462,12 @@ class CloudVisionClient : Closeable {
         val json = jsonConfig.parseToJsonElement(responseText).jsonObject
         val stopReason = json["stop_reason"]?.jsonPrimitive?.contentOrNull
         if (stopReason == "max_tokens") {
-            Log.w("CloudVisionClient", "Anthropic output truncated due to max tokens")
+            if (maxTokens < 8192) {
+                Log.w("CloudVisionClient", "Anthropic output truncated. Re-requesting with 8192 token limit...")
+                return callAnthropicVision(base64Image, apiKey, model, userPrompt, maxTokens = 8192)
+            } else {
+                Log.w("CloudVisionClient", "Anthropic output truncated at maximum 8192 token limit.")
+            }
         }
         val contentArray = json["content"]?.jsonArray
         val textBlock = contentArray?.firstOrNull { it.jsonObject["type"]?.jsonPrimitive?.contentOrNull == "text" }

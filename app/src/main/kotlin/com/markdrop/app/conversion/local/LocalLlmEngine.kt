@@ -107,7 +107,12 @@ class LocalLlmEngine(
         }
     }
 
-    suspend fun transcribePage(bitmap: Bitmap): String = withContext(Dispatchers.Default) {
+    suspend fun transcribePage(
+        bitmap: Bitmap,
+        pageNumber: Int = 1,
+        totalPages: Int = 1,
+        previousTail: String? = null
+    ): String = withContext(Dispatchers.Default) {
         if (!isInitialized || llmInference == null) {
             initialize().getOrThrow()
         }
@@ -135,7 +140,8 @@ class LocalLlmEngine(
                     mpImage.close()
                 }
 
-                val prompt = "${VisionPrompts.SYSTEM_INSTRUCTION}\n\n${VisionPrompts.PAGE_PROMPT}"
+                val userPrompt = VisionPrompts.buildUserPrompt(pageNumber, totalPages, previousTail)
+                val prompt = "${VisionPrompts.SYSTEM_INSTRUCTION}\n\n$userPrompt"
                 session.addQueryChunk(prompt)
 
                 val response = session.generateResponse()

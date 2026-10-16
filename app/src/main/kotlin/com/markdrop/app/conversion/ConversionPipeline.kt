@@ -69,6 +69,7 @@ class ConversionPipeline(
 
             // Resume capability: Fetch existing completed page results for this job
             val existingPages = db.pageResultDao().getByJobId(jobId).associateBy { it.pageIndex }
+            var lastCompletedMarkdown: String? = null
 
             for ((progressIndex, pageIndex) in pagesToProcess.withIndex()) {
                 coroutineContext.ensureActive()
@@ -76,6 +77,7 @@ class ConversionPipeline(
                 // Check if already completed in a prior attempt
                 val existing = existingPages[pageIndex]
                 if (existing != null && existing.status == "DONE" && !existing.markdown.isNullOrBlank()) {
+                    lastCompletedMarkdown = existing.markdown
                     val progress = (progressIndex + 1).toFloat() / totalPages
                     db.conversionDao().updateProgress(jobId, progressIndex + 1, progress)
                     onProgress(progressIndex + 1, totalPages, "Page ${progressIndex + 1} of $totalPages (resumed from cache)")
@@ -105,10 +107,23 @@ class ConversionPipeline(
                                 val provider = secureKeyStore.getSelectedProvider()
                                 val apiKey = secureKeyStore.getApiKey(provider) ?: ""
                                 val model = secureKeyStore.getSelectedModel(provider)
-                                pageMarkdown = cloudClient.transcribePage(bitmap, provider, apiKey, model)
+                                pageMarkdown = cloudClient.transcribePage(
+                                    bitmap = bitmap,
+                                    provider = provider,
+                                    apiKey = apiKey,
+                                    model = model,
+                                    pageNumber = progressIndex + 1,
+                                    totalPages = totalPages,
+                                    previousTail = lastCompletedMarkdown?.takeLast(400)
+                                )
                                 engineUsed = "VISION_AI_CLOUD ($model)"
                             } else if (localLlm != null) {
-                                pageMarkdown = localLlm.transcribePage(bitmap)
+                                pageMarkdown = localLlm.transcribePage(
+                                    bitmap = bitmap,
+                                    pageNumber = progressIndex + 1,
+                                    totalPages = totalPages,
+                                    previousTail = lastCompletedMarkdown?.takeLast(400)
+                                )
                                 engineUsed = "VISION_AI_LOCAL (${manifest.displayName})"
                             }
                         } catch (e: Exception) {
@@ -154,6 +169,9 @@ class ConversionPipeline(
                     engineUsed = engineUsed
                 )
                 db.pageResultDao().insert(pageEntity)
+                if (pageError == null) {
+                    lastCompletedMarkdown = pageMarkdown
+                }
 
                 val progress = (progressIndex + 1).toFloat() / totalPages
                 db.conversionDao().updateProgress(jobId, progressIndex + 1, progress)
