@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Droplet shape -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,28 C54,28 36,48 36,60 C36,70 44,78 54,78 C64,78 72,70 72,60 C72,48 54,28 54,28 Z"/>
+    <!-- Hash/Markdown symbol -->
+    <group
+        android:translateX="44"
+        android:translateY="50">
+        <!-- Vertical bars of # -->
+        <path
+            android:fillColor="#6750A4"
+            android:pathData="M4,0 L6,0 L5,20 L3,20 Z"/>
+        <path
+            android:fillColor="#6750A4"
+            android:pathData="M14,0 L16,0 L15,20 L13,20 Z"/>
+        <!-- Horizontal bars of # -->
+        <path
+            android:fillColor="#6750A4"
+            android:pathData="M1,5 L19,5 L19,7.5 L1,7.5 Z"/>
+        <path
+            android:fillColor="#6750A4"
+            android:pathData="M1,12 L19,12 L19,14.5 L1,14.5 Z"/>
+    </group>
+</vector>

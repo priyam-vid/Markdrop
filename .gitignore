@@ -1,0 +1,24 @@
+# Android / Gradle
+.gradle/
+build/
+app/build/
+.kotlin/
+
+# IDE
+.idea/
+*.iml
+.navigation/
+
+# Local configuration
+local.properties
+
+# Log files
+*.log
+
+# OS generated
+.DS_Store
+Thumbs.db
+
+# Package archives
+*.zip
+*.tar.gz
