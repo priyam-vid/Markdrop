@@ -1,7 +1,12 @@
-# MARKDROP PIPELINE BASELINE (PHASE 0)
+# MARKDROP PIPELINE BASELINE (PHASE 0) — NOT MEASURED (Historical placeholder, do not cite)
+
+> [!WARNING]
+> **NOT MEASURED — Historical placeholder, do not cite.**
+> The metrics in this document were estimated during Round 1 and were not produced by an objective evaluation harness reading real output files.
+> For actual measured metrics against the evaluation corpus, see `docs/baseline_real.md`.
 
 Date: October 2026  
-Status: Pre-Overhaul Baseline Record  
+Status: Pre-Overhaul Baseline Record (Unmeasured Historical Placeholder)  
 Configuration: Pinned legacy implementation (Fast, Smart, Precision, Advanced)
 
 ---

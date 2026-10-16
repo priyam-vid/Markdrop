@@ -1,0 +1,36 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
+4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+5 0 obj << /Length 552 >>
+stream
+BT
+/helv 18 Tf
+50 780 Td
+[(Neural) -250 (Document) -250 (Understanding) -250 (Without) -250 (Spaces)] TJ
+ET
+BT
+/helv 11 Tf
+50 740 Td
+[(Word) -300 (segmentation) -300 (must) -300 (rely) -300 (on) -300 (geometric) -300 (gap) -300 (analysis)] TJ
+0 -20 Td
+[(when) -300 (typesetting) -300 (systems) -300 (emit) -300 (kerning) -300 (offsets) -300 (without) -300 (space) -300 (glyphs.)] TJ
+0 -30 Td
+[(In) -300 (modern) -300 (documents,) -300 (inter-word) -300 (spacing) -300 (is) -300 (frequently) -300 (encoded) -300 (via) -300 (font) -300 (shifts.)] TJ
+ET
+
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000227 00000 n 
+0000000305 00000 n 
+trailer << /Size 6 /Root 1 0 R >>
+startxref
+872
+%%EOF
