@@ -1,7 +1,7 @@
 import fitz  # PyMuPDF
 import os
 
-corpus_dir = os.path.join(os.path.dirname(__file__), "corpus")
+corpus_dir = os.path.join(os.path.dirname(__file__), "..", "testdata", "corpus")
 os.makedirs(corpus_dir, exist_ok=True)
 
 # 1. digital_article_2col.pdf

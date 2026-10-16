@@ -57,7 +57,7 @@ def check_math_validity(markdown):
     block_count = len(re.findall(r'\$\$', markdown))
     return (inline_count % 2 == 0) and (block_count % 2 == 0)
 
-corpus_dir = os.path.join(os.path.dirname(__file__), "corpus")
+corpus_dir = os.path.join(os.path.dirname(__file__), "..", "testdata", "corpus")
 golden_dir = os.path.join(corpus_dir, "golden")
 
 files = [
