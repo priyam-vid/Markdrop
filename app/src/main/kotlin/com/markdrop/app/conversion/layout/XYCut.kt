@@ -26,9 +26,18 @@ object XYCut {
         // 1. If there is a clean vertical gutter with 0 crossing words, cut vertically immediately
         val cleanGutters = findVerticalGutters(lines, maxCrossingRatio = 0.0f)
         if (cleanGutters.isNotEmpty()) {
-            val columnSlices = sliceLinesByGutters(lines, cleanGutters)
-            if (columnSlices.size > 1 && columnSlices.all { it.isNotEmpty() }) {
-                return columnSlices.flatMap { recursiveCut(it, depth + 1) }
+            val hasSignatureBlanks = lines.any { it.text.contains("___") }
+            val hasHeadingInLines = lines.any { line ->
+                line.words.any { word ->
+                    word.text.matches(Regex("""^(\d{1,2}\.|\d{1,2}(\.\d+)+)$"""))
+                } || line.text.matches(Regex("""^(\d{1,2}\.|\d{1,2}(\.\d+)+)\s+[A-Z].*"""))
+            }
+            if (!hasSignatureBlanks && (lines.size >= 3 || hasHeadingInLines)) {
+                val columnSlices = sliceLinesByGutters(lines, cleanGutters)
+                val columnHeight = lines.maxOf { it.y + it.height } - lines.minOf { it.y }
+                if (columnSlices.size > 1 && columnSlices.all { it.isNotEmpty() } && columnHeight >= 25.0f) {
+                    return columnSlices.flatMap { recursiveCut(it, depth + 1) }
+                }
             }
         }
 
@@ -124,13 +133,35 @@ object XYCut {
         val slotLinesWithSlot = lines.flatMap { splitLineByGutters(it, sortedGutters) }
         val columnLines = slotLinesWithSlot.filter { it.first >= 0 }.map { it.second }
         val bannerLines = slotLinesWithSlot.filter { it.first < 0 }.map { it.second }
-
         if (columnLines.isEmpty()) {
+            return Triple(emptyList(), lines, emptyList())
+        }
+
+        val hasSignatureBlanks = columnLines.any { it.text.contains("___") }
+        if (hasSignatureBlanks) {
+            return Triple(emptyList(), lines, emptyList())
+        }
+
+        val linesInColumns = lines.filter { line ->
+            val parts = splitLineByGutters(line, sortedGutters)
+            parts.any { it.first >= 0 }
+        }
+        val hasHeadingInColumns = linesInColumns.any { line ->
+            line.words.any { word ->
+                word.text.matches(Regex("""^(\d{1,2}\.|\d{1,2}(\.\d+)+)$"""))
+            } || line.text.matches(Regex("""^(\d{1,2}\.|\d{1,2}(\.\d+)+)\s+[A-Z].*"""))
+        }
+        if (linesInColumns.size < 3 && !hasHeadingInColumns) {
             return Triple(emptyList(), lines, emptyList())
         }
 
         val firstColY = columnLines.minOf { it.y }
         val lastColBottom = columnLines.maxOf { it.y + it.height }
+        val columnHeight = lastColBottom - firstColY
+
+        if (columnHeight < 25.0f) {
+            return Triple(emptyList(), lines, emptyList())
+        }
 
         val topBanner = mutableListOf<LayoutLine>()
         val middle = mutableListOf<LayoutLine>()
@@ -300,5 +331,12 @@ object XYCut {
 
         // Filter and keep up to 3 non-overlapping gutters (up to 4 columns)
         return merged.sortedByDescending { it.width }.take(3).sortedBy { it.start }
+    }
+
+    private fun isSectionHeading(line: LayoutLine): Boolean {
+        val raw = line.text.trim()
+        return raw.matches(Regex("""^(\d{1,2}\.|\d{1,2}(\.\d+)+)\s+[A-Z].*""")) ||
+                raw.startsWith("#") ||
+                (line.words.isNotEmpty() && line.words.all { it.bold } && raw.length < 60)
     }
 }

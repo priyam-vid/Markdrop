@@ -170,9 +170,21 @@ object LayoutToMarkdown {
         val raw = line.text.trim()
         val isShort = raw.length < 120
         val doesNotEndWithPeriod = !raw.endsWith(".") || raw.matches(Regex("""^\d+(\.\d+)*\.?$"""))
-        val isNumberedHeading = raw.matches(Regex("""^(\d+(\.\d+)*\.?)\s+[A-Z].*"""))
+        val isNumberedHeading = raw.matches(Regex("""^(\d{1,2}\.|\d{1,2}(\.\d+)+)\s+[A-Z].*"""))
 
         return isShort && doesNotEndWithPeriod && (ratio >= 1.15f || isNumberedHeading || (line.isBold && raw.length < 70))
+    }
+
+    private fun hasLargeInternalGap(line: LayoutLine): Boolean {
+        if (line.words.size < 2) return false
+        val sortedWords = line.words.sortedBy { it.left }
+        for (i in 1 until sortedWords.size) {
+            val gap = sortedWords[i].left - sortedWords[i - 1].right
+            if (gap >= (sortedWords[i].fontSize * 2.5f).coerceAtLeast(25f)) {
+                return true
+            }
+        }
+        return false
     }
 
     private fun formatBlock(lines: List<LayoutLine>, bodySize: Float): String {
@@ -227,14 +239,25 @@ object LayoutToMarkdown {
 
         // Reconstruct coherent paragraph with word-level styles and dehyphenation
         val paragraph = StringBuilder()
-        for (line in lines) {
+        for (i in lines.indices) {
+            val line = lines[i]
             val lineFormatted = formatWordsInline(line.words)
             if (lineFormatted.isEmpty()) continue
 
             if (paragraph.isEmpty()) {
                 paragraph.append(lineFormatted)
             } else {
-                if (paragraph.endsWith("-") && lineFormatted.firstOrNull()?.isLowerCase() == true) {
+                val prevLine = lines[i - 1]
+                val prevRaw = prevLine.text.trim()
+                val isHardBreak = prevRaw.contains("...") ||
+                        prevRaw.contains("···") ||
+                        prevRaw.contains("___") ||
+                        prevRaw.endsWith(":") ||
+                        (hasLargeInternalGap(prevLine) && hasLargeInternalGap(line))
+
+                if (isHardBreak) {
+                    paragraph.append("\n").append(lineFormatted)
+                } else if (paragraph.endsWith("-") && lineFormatted.firstOrNull()?.isLowerCase() == true) {
                     paragraph.setLength(paragraph.length - 1)
                     paragraph.append(lineFormatted)
                 } else {
