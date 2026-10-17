@@ -73,8 +73,6 @@ startxref
 
 Word segmentation must rely on geometric gap analysis when typesetting systems emit kerning offsets without space glyphs.
 
-when typesetting systems emit kerning offsets without space glyphs.
-
 In modern documents, inter-word spacing is frequently encoded via font shifts.
 """
     write_golden(os.path.join(golden_dir, "digital_nospace_kerning.page1.md"), golden_md)

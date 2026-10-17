@@ -317,6 +317,7 @@ class RealPipelineEvaluationHarnessTest {
     private fun computeOrderScore(ref: String, hyp: String): Double {
         fun extractSentences(t: String): List<String> {
             val cleaned = t.replace(Regex("""^[#*_\->|]+\s*""", RegexOption.MULTILINE), "")
+                .replace(Regex("""[*_`]"""), "")
             return cleaned.split(Regex("""[.\n?!]+"""))
                 .map { it.trim().lowercase().replace(Regex("""\s+"""), " ") }
                 .filter { it.split(" ").size >= 3 }

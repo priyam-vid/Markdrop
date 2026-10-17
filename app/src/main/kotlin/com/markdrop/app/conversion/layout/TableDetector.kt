@@ -1,5 +1,9 @@
 package com.markdrop.app.conversion.layout
 
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+
 /**
  * Fragment of words within a line that belong to the same table cell.
  */
@@ -22,8 +26,9 @@ data class DetectedTable(
 
 /**
  * Robust spatial alignment-based table detector.
- * Discovers columns via inter-word spacing gutters and vertical X-alignment across rows.
- * Supports multi-word cells, missing cells, and strictly rejects prose paragraphs.
+ * Discovers columns via inter-word spacing gutters and dual-edge (left or right) alignment.
+ * Supports multi-word cells, right-aligned numeric columns, missing cells,
+ * and strictly rejects prose paragraphs, TOC dot leaders, address blocks, and signature lines.
  */
 object TableDetector {
 
@@ -49,7 +54,7 @@ object TableDetector {
                 val prevWord = currentCellWords.last()
                 val gap = word.left - prevWord.right
                 // Table column gutters are significantly larger than intra-cell word spacing.
-                // Normal word spacing: ~3-5pt. Column gutters: typically >= 14pt or >= 1.4 * fontSize.
+                // Column gutters are typically >= 14pt or >= 1.35 * fontSize.
                 val minColumnGap = (word.fontSize * 1.35f).coerceAtLeast(13f)
                 if (gap >= minColumnGap) {
                     cells.add(CellFragment(currentCellWords))
@@ -74,10 +79,9 @@ object TableDetector {
 
         val lineFragments = lines.map { clusterLineIntoCells(it) }
 
-        // Find candidate continuous row ranges where lines have multiple cell fragments
         var bestTable: DetectedTable? = null
-
         var start = 0
+
         while (start < lines.size) {
             // Find start of multi-cell lines
             if (lineFragments[start].size < 2) {
@@ -113,11 +117,28 @@ object TableDetector {
         lines: List<LayoutLine>,
         frags: List<List<CellFragment>>
     ): DetectedTable? {
-        // Collect all left coordinates to discover column anchors
-        val allLefts = frags.flatMap { row -> row.map { it.left } }.sorted()
-        if (allLefts.isEmpty()) return null
+        val candidateCount = lines.size
 
-        // Cluster left coordinates within tolerance (18pt)
+        // Negative Control: Reject Table of Contents dot leaders
+        if (lines.any { it.text.contains("...") || it.text.contains(". . .") || it.text.contains("···") || it.text.matches(Regex(""".*\.{3,}.*""")) }) {
+            return null
+        }
+
+        // Negative Control: Reject signature lines and form fields
+        if (lines.any { it.text.contains("Signature:", ignoreCase = true) || it.text.contains("Date:", ignoreCase = true) || it.text.contains("_____") }) {
+            return null
+        }
+
+        // Negative Control: Reject lines where cells contain markdown heading syntax (### Column Headings)
+        if (lines.any { it.text.trim().startsWith("#") } || frags.any { row -> row.any { it.text.trim().startsWith("#") } }) {
+            return null
+        }
+
+        // Collect all left and right coordinates to discover column anchors
+        val allFrags = frags.flatten()
+        if (allFrags.isEmpty()) return null
+
+        val allLefts = allFrags.map { it.left }.sorted()
         val columnAnchors = mutableListOf<Float>()
         var cluster = mutableListOf<Float>()
 
@@ -125,7 +146,7 @@ object TableDetector {
             if (cluster.isEmpty()) {
                 cluster.add(left)
             } else {
-                if (left - cluster.last() <= 18f) {
+                if (left - cluster.last() <= 20f) {
                     cluster.add(left)
                 } else {
                     columnAnchors.add(cluster.average().toFloat())
@@ -140,8 +161,28 @@ object TableDetector {
         val numColumns = columnAnchors.size
         if (numColumns < 2) return null
 
-        // Map each line's fragments to the closest column anchor
+        // Rule 1: Minimum rows requirement
+        // Require at least 3 rows to form a table, or 2 rows ONLY if first row is distinctly bold/header-styled AND has >= 3 columns.
+        val isFirstRowHeader = lines.first().isBold || frags.first().all { frag ->
+            frag.words.isNotEmpty() && (frag.words.all { it.bold } || frag.words.count { it.bold } >= (frag.words.size * 0.6))
+        }
+        if (candidateCount < 3 && !(candidateCount == 2 && isFirstRowHeader && numColumns >= 3)) {
+            return null
+        }
+
+        // Compute column bounds for overlap mapping
+        data class ColRange(val left: Float, val right: Float)
+        val colRanges = columnAnchors.mapIndexed { idx, anchorLeft ->
+            val nextAnchor = columnAnchors.getOrNull(idx + 1) ?: (anchorLeft + 150f)
+            val fragsInCol = allFrags.filter { it.left >= anchorLeft - 25f && it.left < nextAnchor - 10f }
+            val colRight = if (fragsInCol.isNotEmpty()) fragsInCol.maxOf { it.right } else nextAnchor
+            ColRange(anchorLeft, colRight)
+        }
+
+        // Map each line's fragments to the best matching column
         val mappedRows = mutableListOf<List<String>>()
+        val colLeftCoords = List(numColumns) { mutableListOf<Float>() }
+        val colRightCoords = List(numColumns) { mutableListOf<Float>() }
         var validRowMatchCount = 0
 
         for (row in frags) {
@@ -149,21 +190,29 @@ object TableDetector {
             var rowFilled = 0
 
             for (fragment in row) {
-                // Find closest anchor
-                var bestAnchorIdx = -1
-                var bestDist = Float.MAX_VALUE
+                // Find column with highest horizontal overlap, or closest anchor
+                var bestCol = -1
+                var bestOverlap = -1.0f
 
-                for (c in columnAnchors.indices) {
-                    val dist = kotlin.math.abs(fragment.left - columnAnchors[c])
-                    if (dist < bestDist && dist <= 30f) {
-                        bestDist = dist
-                        bestAnchorIdx = c
+                for (c in 0 until numColumns) {
+                    val cr = colRanges[c]
+                    val overlap = max(0f, min(fragment.right, cr.right) - max(fragment.left, cr.left))
+                    if (overlap > bestOverlap) {
+                        bestOverlap = overlap
+                        bestCol = c
                     }
                 }
 
-                if (bestAnchorIdx != -1) {
-                    val existing = rowCells[bestAnchorIdx]
-                    rowCells[bestAnchorIdx] = if (existing.isEmpty()) fragment.text else "$existing ${fragment.text}"
+                if (bestCol == -1 || bestOverlap <= 0f) {
+                    // Fallback to closest anchor distance
+                    bestCol = columnAnchors.indices.minByOrNull { abs(fragment.left - columnAnchors[it]) } ?: -1
+                }
+
+                if (bestCol != -1) {
+                    val existing = rowCells[bestCol]
+                    rowCells[bestCol] = if (existing.isEmpty()) fragment.text else "$existing ${fragment.text}"
+                    colLeftCoords[bestCol].add(fragment.left)
+                    colRightCoords[bestCol].add(fragment.right)
                     rowFilled++
                 }
             }
@@ -179,14 +228,29 @@ object TableDetector {
             return null
         }
 
-        // Check for prose characteristics: average cell length > 80 chars
+        // Rule 2: Dual-edge alignment verification
+        // Each column must have consistent left alignment OR consistent right alignment across rows
+        for (c in 0 until numColumns) {
+            val lefts = colLeftCoords[c]
+            val rights = colRightCoords[c]
+            if (lefts.size >= 2) {
+                val leftSpread = lefts.maxOrNull()!! - lefts.minOrNull()!!
+                val rightSpread = rights.maxOrNull()!! - rights.minOrNull()!!
+                val minSpread = min(leftSpread, rightSpread)
+                // If neither left nor right alignment is consistent (spread > 22pt), reject as unaligned prose
+                if (minSpread > 22.0f) {
+                    return null
+                }
+            }
+        }
+
+        // Rule 3: Prose paragraph rejection
         val totalCells = mappedRows.sumOf { r -> r.count { it.isNotBlank() } }
         val totalChars = mappedRows.sumOf { r -> r.sumOf { it.length } }
         if (totalCells > 0 && (totalChars / totalCells) > 80) {
             return null
         }
 
-        // Strict rejection for 2-column prose: if 2 columns and average words per cell > 4, reject
         if (numColumns == 2) {
             val filledCells = mappedRows.flatMap { r -> r.filter { it.isNotBlank() } }
             if (filledCells.isNotEmpty()) {

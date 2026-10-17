@@ -3,9 +3,14 @@ package com.markdrop.app.conversion.layout
 /**
  * Recursive XY-Cut algorithm for spatial document layout decomposition.
  * Discovers columns, banners, sidebars, and reading order naturally via white-space projection.
+ * Supports N-column layouts (N in [1, 2, 3, 4]) and banner-aware segmentation.
  * Free of Android framework dependencies.
  */
 object XYCut {
+
+    data class Gutter(val start: Float, val end: Float) {
+        val width: Float get() = end - start
+    }
 
     fun segment(lines: List<LayoutLine>, pageWidth: Float, pageHeight: Float): List<LayoutBlock> {
         if (lines.isEmpty()) return emptyList()
@@ -14,81 +19,187 @@ object XYCut {
     }
 
     private fun recursiveCut(lines: List<LayoutLine>, depth: Int): List<LayoutBlock> {
-        if (lines.size <= 1 || depth > 8) {
+        if (lines.size <= 1 || depth > 10) {
             return if (lines.isEmpty()) emptyList() else listOf(LayoutBlock(lines))
         }
 
-        val bodyMode = computeBodyMode(lines)
-        val verticalGutters = findVerticalGutters(lines, bodyMode)
-
-        // 1. If there is a complete vertical gutter with 0 spanning lines (pure columns), cut vertically immediately
-        if (verticalGutters.isNotEmpty()) {
-            val gutter = verticalGutters.first()
-            val (leftCol, rightCol, spanningLines) = partitionLines(lines, gutter)
-
-            if (leftCol.isNotEmpty() && rightCol.isNotEmpty() && spanningLines.isEmpty()) {
-                return recursiveCut(leftCol, depth + 1) + recursiveCut(rightCol, depth + 1)
+        // 1. If there is a clean vertical gutter with 0 crossing words, cut vertically immediately
+        val cleanGutters = findVerticalGutters(lines, maxCrossingRatio = 0.0f)
+        if (cleanGutters.isNotEmpty()) {
+            val columnSlices = sliceLinesByGutters(lines, cleanGutters)
+            if (columnSlices.size > 1 && columnSlices.all { it.isNotEmpty() }) {
+                return columnSlices.flatMap { recursiveCut(it, depth + 1) }
             }
         }
 
-        // 2. Check for prominent horizontal white gaps (e.g. separating Title, Body, Footnotes)
-        val horizontalCutIdx = findHorizontalCut(lines, bodyMode)
+        // 2. Banner-aware segmentation:
+        // Detect candidate vertical gutters across page height using relaxed threshold (provisional gutters)
+        val provisionalGutters = findVerticalGutters(lines, maxCrossingRatio = 0.45f)
+        if (provisionalGutters.isNotEmpty()) {
+            val (topBanner, middleColumns, bottomBanner) = partitionBannerAndColumns(lines, provisionalGutters)
+            if (topBanner.isNotEmpty() || bottomBanner.isNotEmpty()) {
+                val result = mutableListOf<LayoutBlock>()
+                if (topBanner.isNotEmpty()) {
+                    result.addAll(recursiveCut(topBanner, depth + 1))
+                }
+                if (middleColumns.isNotEmpty()) {
+                    result.addAll(recursiveCut(middleColumns, depth + 1))
+                }
+                if (bottomBanner.isNotEmpty()) {
+                    result.addAll(recursiveCut(bottomBanner, depth + 1))
+                }
+                return result
+            }
+        }
+
+        // 3. Dynamic horizontal cut: threshold relative to local line height (gap >= 1.2 * localLineHeight, min 4 pt)
+        val horizontalCutIdx = findHorizontalCut(lines)
         if (horizontalCutIdx != -1) {
             val topLines = lines.subList(0, horizontalCutIdx)
             val bottomLines = lines.subList(horizontalCutIdx, lines.size)
             return recursiveCut(topLines, depth + 1) + recursiveCut(bottomLines, depth + 1)
         }
 
-        // 3. Check for vertical white-space gutters across lines with spanning lines
-        if (verticalGutters.isNotEmpty()) {
-            val gutter = verticalGutters.first()
-            val (leftCol, rightCol, spanningLines) = partitionLines(lines, gutter)
-
-            // If we found a clean column separation
-            if (leftCol.isNotEmpty() && rightCol.isNotEmpty() && (leftCol.size + rightCol.size) >= (lines.size * 0.6)) {
-                val topSpanning = spanningLines.filter { it.y < minOf(leftCol.first().y, rightCol.first().y) }
-                val bottomSpanning = spanningLines.filter { it !in topSpanning }
-
-                val result = mutableListOf<LayoutBlock>()
-                if (topSpanning.isNotEmpty()) result.addAll(recursiveCut(topSpanning, depth + 1))
-                result.addAll(recursiveCut(leftCol, depth + 1))
-                result.addAll(recursiveCut(rightCol, depth + 1))
-                if (bottomSpanning.isNotEmpty()) result.addAll(recursiveCut(bottomSpanning, depth + 1))
-                return result
-            }
-        }
-
         return listOf(LayoutBlock(lines))
     }
 
-    private fun partitionLines(
-        lines: List<LayoutLine>,
-        gutter: Gutter
-    ): Triple<List<LayoutLine>, List<LayoutLine>, List<LayoutLine>> {
-        val leftCol = mutableListOf<LayoutLine>()
-        val rightCol = mutableListOf<LayoutLine>()
-        val spanning = mutableListOf<LayoutLine>()
-
-        for (line in lines) {
-            val leftWords = line.words.filter { it.right <= gutter.start }
-            val rightWords = line.words.filter { it.left >= gutter.end }
-            val spanningWords = line.words.filter { it !in leftWords && it !in rightWords }
-
-            when {
-                leftWords.isNotEmpty() && rightWords.isNotEmpty() && spanningWords.isEmpty() -> {
-                    leftCol.add(LayoutLine(words = leftWords, y = line.y, height = line.height, fontSize = line.fontSize))
-                    rightCol.add(LayoutLine(words = rightWords, y = line.y, height = line.height, fontSize = line.fontSize))
-                }
-                line.right <= gutter.start -> leftCol.add(line)
-                line.left >= gutter.end -> rightCol.add(line)
-                else -> spanning.add(line)
+    /**
+     * Determines which column slot a word belongs to given a set of sorted non-overlapping gutters.
+     * Returns:
+     * - slot index in 0..k if word falls entirely inside that slot
+     * - -1 if word crosses or falls inside any gutter
+     */
+    private fun getWordSlot(word: LayoutWord, sortedGutters: List<Gutter>): Int {
+        val k = sortedGutters.size
+        for (g in sortedGutters) {
+            // If word overlaps with the gutter
+            if (word.left < g.end - 1.0f && word.right > g.start + 1.0f) {
+                return -1
             }
         }
-        return Triple(leftCol, rightCol, spanning)
+
+        if (word.right <= sortedGutters[0].start + 2.0f) return 0
+        if (word.left >= sortedGutters[k - 1].end - 2.0f) return k
+
+        for (i in 1 until k) {
+            if (word.left >= sortedGutters[i - 1].end - 2.0f && word.right <= sortedGutters[i].start + 2.0f) {
+                return i
+            }
+        }
+        return -1
     }
 
-    private fun findHorizontalCut(lines: List<LayoutLine>, bodyMode: Float): Int {
-        val minGap = (bodyMode * 1.8f).coerceAtLeast(22f)
+    /**
+     * Splits a LayoutLine by vertical gutters into constituent lines per column slot.
+     * Preserves all words.
+     */
+    private fun splitLineByGutters(line: LayoutLine, sortedGutters: List<Gutter>): List<Pair<Int, LayoutLine>> {
+        val wordSlots = line.words.groupBy { getWordSlot(it, sortedGutters) }
+        val result = mutableListOf<Pair<Int, LayoutLine>>()
+
+        for ((slot, wordsInSlot) in wordSlots) {
+            if (wordsInSlot.isEmpty()) continue
+            val sortedWords = wordsInSlot.sortedBy { it.left }
+            result.add(
+                slot to LayoutLine(
+                    words = sortedWords,
+                    y = line.y,
+                    height = line.height,
+                    fontSize = line.fontSize,
+                    left = sortedWords.first().left,
+                    right = sortedWords.last().right
+                )
+            )
+        }
+        return result
+    }
+
+    private fun partitionBannerAndColumns(
+        lines: List<LayoutLine>,
+        gutters: List<Gutter>
+    ): Triple<List<LayoutLine>, List<LayoutLine>, List<LayoutLine>> {
+        val sortedGutters = gutters.sortedBy { it.start }
+
+        // Deconstruct lines into column slot candidates and spanning banner candidates
+        val slotLinesWithSlot = lines.flatMap { splitLineByGutters(it, sortedGutters) }
+        val columnLines = slotLinesWithSlot.filter { it.first >= 0 }.map { it.second }
+        val bannerLines = slotLinesWithSlot.filter { it.first < 0 }.map { it.second }
+
+        if (columnLines.isEmpty()) {
+            return Triple(emptyList(), lines, emptyList())
+        }
+
+        val firstColY = columnLines.minOf { it.y }
+        val lastColBottom = columnLines.maxOf { it.y + it.height }
+
+        val topBanner = mutableListOf<LayoutLine>()
+        val middle = mutableListOf<LayoutLine>()
+        val bottomBanner = mutableListOf<LayoutLine>()
+
+        for (line in lines) {
+            val parts = splitLineByGutters(line, sortedGutters)
+            val isSpanning = parts.any { it.first < 0 }
+
+            if (isSpanning) {
+                if (line.y + line.height <= firstColY + 2.0f) {
+                    topBanner.add(line)
+                } else if (line.y >= lastColBottom - 2.0f) {
+                    bottomBanner.add(line)
+                } else {
+                    // Spanning in the middle (e.g. wide figure or full-width table)
+                    middle.add(line)
+                }
+            } else {
+                // Non-spanning lines
+                if (line.y + line.height <= firstColY + 1.0f) {
+                    topBanner.add(line)
+                } else if (line.y >= lastColBottom - 1.0f && bannerLines.any { it.y >= lastColBottom - 2.0f }) {
+                    bottomBanner.add(line)
+                } else {
+                    middle.add(line)
+                }
+            }
+        }
+
+        return Triple(topBanner, middle, bottomBanner)
+    }
+
+    private fun sliceLinesByGutters(lines: List<LayoutLine>, gutters: List<Gutter>): List<List<LayoutLine>> {
+        val sortedGutters = gutters.sortedBy { it.start }
+        val k = sortedGutters.size
+        val slices = List(k + 1) { mutableListOf<LayoutLine>() }
+
+        for (line in lines) {
+            val parts = splitLineByGutters(line, sortedGutters)
+            for ((slot, subLine) in parts) {
+                if (slot in 0..k) {
+                    slices[slot].add(subLine)
+                } else {
+                    // Fallback for spanning lines: place into the slot containing line center
+                    val center = (subLine.left + subLine.right) / 2.0f
+                    val targetSlot = when {
+                        center <= sortedGutters[0].start -> 0
+                        center >= sortedGutters[k - 1].end -> k
+                        else -> {
+                            var matched = 0
+                            for (i in 1 until k) {
+                                if (center >= sortedGutters[i - 1].end && center <= sortedGutters[i].start) {
+                                    matched = i
+                                    break
+                                }
+                            }
+                            matched
+                        }
+                    }
+                    slices[targetSlot].add(subLine)
+                }
+            }
+        }
+
+        return slices
+    }
+
+    private fun findHorizontalCut(lines: List<LayoutLine>): Int {
         var maxGap = 0f
         var bestIdx = -1
 
@@ -96,6 +207,9 @@ object XYCut {
             val prev = lines[i - 1]
             val curr = lines[i]
             val gap = curr.y - (prev.y + prev.height)
+            val localLineHeight = maxOf(prev.height, curr.height, prev.fontSize, curr.fontSize)
+            val minGap = (localLineHeight * 1.2f).coerceAtLeast(4.0f)
+
             if (gap >= minGap && gap > maxGap) {
                 maxGap = gap
                 bestIdx = i
@@ -104,35 +218,29 @@ object XYCut {
         return bestIdx
     }
 
-    data class Gutter(val start: Float, val end: Float) {
-        val width: Float get() = end - start
-    }
+    private fun findVerticalGutters(lines: List<LayoutLine>, maxCrossingRatio: Float): List<Gutter> {
+        val allWords = lines.flatMap { it.words }
+        if (allWords.isEmpty()) return emptyList()
 
-    private fun findVerticalGutters(lines: List<LayoutLine>, bodyMode: Float): List<Gutter> {
-        val minGutterWidth = (bodyMode * 1.5f).coerceAtLeast(20f)
-        val leftBound = lines.minOf { it.left }
-        val rightBound = lines.maxOf { it.right }
-        val width = rightBound - leftBound
-        if (width < 100f) return emptyList()
+        val leftBound = allWords.minOf { it.left }
+        val rightBound = allWords.maxOf { it.right }
+        val totalWidth = rightBound - leftBound
+        if (totalWidth < 100f) return emptyList()
 
-        // Histogram of horizontal coverage in 2-point bins using actual word boundaries
         val binSize = 2.0f
-        val numBins = ((rightBound - leftBound) / binSize).toInt() + 1
+        val numBins = ((totalWidth) / binSize).toInt() + 1
         val coverage = IntArray(numBins)
 
-        for (line in lines) {
-            for (word in line.words) {
-                val startBin = ((word.left - leftBound) / binSize).toInt().coerceIn(0, numBins - 1)
-                val endBin = ((word.right - leftBound) / binSize).toInt().coerceIn(0, numBins - 1)
-                for (b in startBin..endBin) {
-                    coverage[b]++
-                }
+        for (word in allWords) {
+            val startBin = ((word.left - leftBound) / binSize).toInt().coerceIn(0, numBins - 1)
+            val endBin = ((word.right - leftBound) / binSize).toInt().coerceIn(0, numBins - 1)
+            for (b in startBin..endBin) {
+                coverage[b]++
             }
         }
 
-        // Find intervals where coverage is zero across nearly all lines
-        val maxAllowedCoverage = (lines.size * 0.08f).toInt()
-        val gutters = mutableListOf<Gutter>()
+        val maxAllowedCoverage = (lines.size * maxCrossingRatio).toInt()
+        val candidateGutters = mutableListOf<Gutter>()
         var inGutter = false
         var gutterStart = 0f
 
@@ -147,23 +255,50 @@ object XYCut {
                 if (inGutter) {
                     inGutter = false
                     val gutterEnd = x
-                    if (gutterEnd - gutterStart >= minGutterWidth) {
-                        // Ensure gutter is not on outer margins
-                        if (gutterStart > leftBound + 25f && gutterEnd < rightBound - 25f) {
-                            gutters.add(Gutter(gutterStart, gutterEnd))
+                    val width = gutterEnd - gutterStart
+                    if (width >= 8.0f && gutterStart > leftBound + 15f && gutterEnd < rightBound - 15f) {
+                        // Check if text exists on both sides
+                        val hasLeft = allWords.any { it.right <= gutterStart + 2.0f }
+                        val hasRight = allWords.any { it.left >= gutterEnd - 2.0f }
+                        if (hasLeft && hasRight) {
+                            candidateGutters.add(Gutter(gutterStart, gutterEnd))
                         }
                     }
                 }
             }
         }
 
-        return gutters.sortedByDescending { it.width }
-    }
+        if (inGutter) {
+            val gutterEnd = leftBound + numBins * binSize
+            val width = gutterEnd - gutterStart
+            if (width >= 8.0f && gutterStart > leftBound + 15f && gutterEnd < rightBound - 15f) {
+                val hasLeft = allWords.any { it.right <= gutterStart + 2.0f }
+                val hasRight = allWords.any { it.left >= gutterEnd - 2.0f }
+                if (hasLeft && hasRight) {
+                    candidateGutters.add(Gutter(gutterStart, gutterEnd))
+                }
+            }
+        }
 
-    private fun computeBodyMode(lines: List<LayoutLine>): Float {
-        val sizes = lines.map { it.fontSize }.filter { it > 0f }
-        if (sizes.isEmpty()) return 12f
-        val buckets = sizes.groupingBy { kotlin.math.round(it) }.eachCount()
-        return buckets.maxByOrNull { it.value }?.key ?: 12f
+        // Sort by start x and merge closely adjacent/overlapping candidate gutters
+        if (candidateGutters.isEmpty()) return emptyList()
+        val sorted = candidateGutters.sortedBy { it.start }
+        val merged = mutableListOf<Gutter>()
+        var current = sorted[0]
+
+        for (i in 1 until sorted.size) {
+            val next = sorted[i]
+            if (next.start <= current.end + 4.0f) {
+                // Merge
+                current = Gutter(current.start, maxOf(current.end, next.end))
+            } else {
+                merged.add(current)
+                current = next
+            }
+        }
+        merged.add(current)
+
+        // Filter and keep up to 3 non-overlapping gutters (up to 4 columns)
+        return merged.sortedByDescending { it.width }.take(3).sortedBy { it.start }
     }
 }

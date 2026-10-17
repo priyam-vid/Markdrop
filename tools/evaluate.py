@@ -55,8 +55,10 @@ def compute_wer(ref_text: str, hyp_text: str) -> float:
 
 def extract_sentences(text: str) -> List[str]:
     normalized = normalize_text_line_endings(text)
-    # Remove markdown formatting characters
+    # Remove markdown block/line formatting characters
     cleaned = re.sub(r'^[#*_\->|]+\s*', '', normalized, flags=re.MULTILINE)
+    # Remove inline emphasis markers (*, _, `) so formatting doesn't perturb sentence LCS
+    cleaned = re.sub(r'[*_`]', '', cleaned)
     # Split by punctuation or newlines
     raw_sentences = re.split(r'[.\n?!]+', cleaned)
     sentences = []

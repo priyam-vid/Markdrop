@@ -170,7 +170,7 @@ object LayoutToMarkdown {
         val raw = line.text.trim()
         val isShort = raw.length < 120
         val doesNotEndWithPeriod = !raw.endsWith(".") || raw.matches(Regex("""^\d+(\.\d+)*\.?$"""))
-        val isNumberedHeading = raw.matches(Regex("""^(\d+(\.\d+)*)\s+[A-Z].*"""))
+        val isNumberedHeading = raw.matches(Regex("""^(\d+(\.\d+)*\.?)\s+[A-Z].*"""))
 
         return isShort && doesNotEndWithPeriod && (ratio >= 1.15f || isNumberedHeading || (line.isBold && raw.length < 70))
     }

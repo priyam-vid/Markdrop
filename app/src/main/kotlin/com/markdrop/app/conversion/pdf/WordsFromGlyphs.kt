@@ -3,6 +3,21 @@ package com.markdrop.app.conversion.pdf
 import com.markdrop.app.conversion.layout.LayoutWord
 import kotlin.math.abs
 
+/*
+ * PDFBox Coordinate & Orientation Semantics (verified from com.tom_roush.pdfbox.text.TextPosition bytecode):
+ * 1. getYDirAdj() vs getY():
+ *    getY() returns the unadjusted y-coordinate in default PDF user space (origin at bottom-left, y increasing upward).
+ *    getYDirAdj() accounts for page rotation and text direction, transforming into a top-down display coordinate system
+ *    where (0,0) is at top-left and y increases downward (computed as `pageHeight - translateY` for 0-degree rotation).
+ * 2. getHeightDir() vs getHeight():
+ *    getHeightDir() returns the character height (maxHeight) aligned with text direction, reflecting font ascender height
+ *    scaled to font size above the baseline.
+ * 3. top vs bottom:
+ *    Because (0,0) is at top-left and yDirAdj represents the baseline y-position in top-down coordinates:
+ *    bottom = getYDirAdj() (the baseline)
+ *    top = getYDirAdj() - getHeightDir() (ascender top, having smaller y).
+ */
+
 /**
  * Pure Kotlin glyph-to-word grouping algorithm.
  * Reconstructs words from individual glyphs and kerning offsets without losing spaces.
@@ -88,9 +103,9 @@ object WordsFromGlyphs {
                 val text = normalizeLigatures(rawText)
                 if (text.isNotEmpty()) {
                     val left = currentWordGlyphs.minOf { it.x }
-                    val top = currentWordGlyphs.minOf { it.y }
+                    val top = currentWordGlyphs.minOf { it.y - it.height }
                     val right = currentWordGlyphs.maxOf { it.x + it.width }
-                    val bottom = currentWordGlyphs.maxOf { it.y + it.height }
+                    val bottom = currentWordGlyphs.maxOf { it.y }
                     val fontSize = currentWordGlyphs.map { it.fontSize }.average().toFloat()
                     val bold = currentWordGlyphs.count { it.bold } >= (currentWordGlyphs.size * 0.6)
                     val italic = currentWordGlyphs.count { it.italic } >= (currentWordGlyphs.size * 0.6)
@@ -125,7 +140,14 @@ object WordsFromGlyphs {
                     val gap = glyph.x - (prev.x + prev.width)
                     val maxIntraWordGap = (prev.fontSize * 0.22f).coerceAtLeast(1.2f)
 
-                    if (gap > maxIntraWordGap) {
+                    if (glyph.x < prev.x + prev.width) {
+                        val overlap = (prev.x + prev.width) - glyph.x
+                        if (overlap >= 0.3f * prev.width) {
+                            // Significant backwards jump / overlap: treat as word boundary
+                            flushCurrentWord()
+                        }
+                        // else: overlap < 0.3 * prev.width -> font kerning within the same word
+                    } else if (gap > maxIntraWordGap) {
                         // Word break due to kerning gap or space offset
                         flushCurrentWord()
                     }

@@ -1,31 +1,16 @@
 {
   "expectedFailures": {
-    "digital_article_2col": "F1: banner over two columns causes reading order failure with 22.2pt gap",
-    "banner_gap_8pt": "F1: banner over two columns causes reading order failure with 8pt gap",
-    "banner_gap_12pt": "F1: banner over two columns causes reading order failure with 12pt gap",
-    "banner_gap_18pt": "F1: banner over two columns causes reading order failure with 18pt gap",
-    "banner_gap_22pt": "F1: banner over two columns causes reading order failure with 22pt gap",
-    "banner_gap_30pt": "F1: banner over two columns causes reading order failure with 30pt gap",
-    "banner_gap_40pt": "F1: banner over two columns causes reading order failure with 40pt gap",
-    "banner_abstract_1line": "F1: banner over two columns causes reading order failure with 1-line abstract",
-    "banner_abstract_6line": "F1: banner over two columns causes reading order failure with 6-line abstract",
-    "banner_with_footnote": "F1: banner over two columns causes reading order failure with footnote",
-    "banner_with_sidebar": "F1: banner over two columns causes reading order failure with sidebar",
-    "three_column_banner": "F1: three-column layout under banner causes reading order failure",
-    "address_block_two_row": "F14: two-row address block erroneously parsed as table",
-    "signature_line": "F14: two-row signature line erroneously parsed as table",
+    "address_block_two_row": "F14: two-row address block erroneously formatted without line break",
+    "signature_line": "F14: two-row signature line erroneously formatted without line break",
     "toc_dot_leaders": "F14: table of contents dot leaders ordering / format",
     "question_bank_pages": "F9: 5-page document headings stripped by line-index cleaner",
     "digital_multipage_table": "F10: assembler does not emit page 1 marker",
     "digital_with_raster_figure": "F11: raster figure box placed at hardcoded coordinates",
     "blank_middle_page": "F10: assembler does not emit blank page comments or page 1 marker",
     "page_selection_sample": "F10: assembler does not preserve original page numbers for selected pages",
-    "digital_nospace_kerning": "F15: word segmentation on kerned and negative-spaced text",
-    "digital_two_column_real": "F1: sentence-level reading order across two columns",
     "digital_math": "F15: reading order and alignment on sub/superscript math formulas",
     "digital_with_figures": "F3: vector figure text ordering and placement",
-    "mixed_slides": "F3: slide box layout ordering across multi-column slide items",
-    "typed_notes_sample": "F1: margin note box layout reading order"
+    "mixed_slides": "F3: slide box layout ordering across multi-column slide items"
   },
   "documents": {
     "digital_nospace_kerning": {
