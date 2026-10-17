@@ -14,18 +14,18 @@ Markdrop is a high-performance, privacy-first native Android application enginee
   - **On-Device OCR**: High-resolution rasterization (200–300 DPI) and Google ML Kit text recognition for scanned pages.
   - **Deterministic Layout Engine (`LayoutToMarkdown`)**: Spatial XY-cut recursive reading order, word clustering, column gutter detection, table detection with multi-word and missing-cell alignment, list hierarchy and bullet normalization, and geometric header/footer filtering.
 - **AI Mode (Frontier Vision Intelligence)**:
-  - **Cloud BYOK (Bring Your Own Key)**: Direct client-side multimodal vision calls to Google Gemini (`gemini-2.0-flash`), Anthropic Claude (`claude-3-7-sonnet-20250219`, `claude-3-5-sonnet-latest`), OpenAI (`gpt-4o`, `gpt-4o-mini`), or OpenRouter.
+  - **Cloud BYOK (Bring Your Own Key)**: Direct client-side multimodal vision calls to Google Gemini (`gemini-2.5-flash`, `gemini-2.0-flash`), Anthropic Claude (`claude-3-7-sonnet-20250219`, `claude-3-5-sonnet-20241022`), OpenAI (`gpt-4o`, `gpt-4o-mini`), or OpenRouter.
   - **On-Device Quantized LLMs**: Private local vision inference via Google LiteRT (MediaPipe Tasks GenAI) running multimodal models (PaliGemma, Gemma 3n) with hardware acceleration.
   - **Comprehensive Prompting**: Formats LaTeX math (`$...$`, `$$...$$`), tabular grids, figures (`> **Figure [N]:**`), margin notes, struck-through text (`~~...~~`), and `[illegible]` tags without hallucination.
 
 ### 2. Resilient Background Execution & Persistence
-- **Foreground Service Worker**: Conversions execute via AndroidX `WorkManager` bound to a foreground service with persistent notifications, preventing Android from killing tasks when the app is backgrounded or the screen rotates. Cancellation gracefully transitions jobs to `CANCELLED` status.
+- **Foreground Service Worker**: Conversions execute via AndroidX `WorkManager` bound to a foreground service with persistent notifications, preventing Android from killing tasks when the app is backgrounded or the screen rotates. Cancellation gracefully transitions jobs to `CANCELLED` status, while system constraints trigger exponential backoff retry.
 - **Per-Page Room Persistence**: Page results are immediately saved into the Room database (`page_results`). If a conversion is paused or interrupted, already completed pages are preserved and resumption processes only pending pages.
 - **Page Selection Support**: Convert custom page ranges (e.g. `1-5, 8, 12-15`) saved directly in `conversions` table (`MIGRATION_2_3`).
 - **Cross-Page Assembler**: Rejoins pages using clean `<!-- page: N -->` markers (no raw `---` thematic breaks), repairs broken paragraphs split across page boundaries, and merges continuation tables across pages.
 
 ### 3. Document Intake & Workspace
-- **Multi-Source Intake**: Select native PDF documents, import existing gallery images, or capture live document scans using the built-in camera launcher through a unified pipeline with downsampling safety.
+- **Multi-Source Intake**: Select native PDF documents, import existing gallery images (with multi-image batching in Room v4), or capture live document scans using the built-in camera launcher through a unified pipeline with downsampling safety and storage sandbox copy.
 - **Synchronized Split-View**: Side-by-side / top-and-bottom dual-pane workspace in `MarkdownViewerScreen` comparing the original document page against the live rendered Markdown with page jumping support.
 - **Hardware-Backed Security**: API keys stored in `EncryptedSharedPreferences` (AES-256-GCM via Android Keystore). Local diagnostics dumps and multi-GB model weights are excluded from Android cloud backups (`android:allowBackup="false"`).
 
@@ -52,22 +52,26 @@ markdrop/
 │       │   │   │   ├── ocr/                # ML Kit text recognition
 │       │   │   │   ├── pdf/                # PDFBox text-layer extraction, words & geometry
 │       │   │   │   └── worker/             # AndroidX WorkManager foreground worker
-│       │   │   ├── data/                   # Room DB (v3), Settings DataStore & SecureKeyStore
+│       │   │   ├── data/                   # Room DB (v4), Settings DataStore & SecureKeyStore
 │       │   │   ├── diagnostics/            # Diagnostic traces & export utilities
 │       │   │   ├── model/                  # LiteRT model manager & validator
 │       │   │   ├── ui/                     # Jetpack Compose UI (Screens, Nav, Theme)
 │       │   │   └── util/                   # UI haptics and helper utilities
 │       │   └── res/                        # Drawables, mipmaps, strings, and themes
-│       └── test/                           # JVM unit test suite (pure Kotlin & Robolectric harness)
+│       ├── test/                           # JVM unit test suite (pure Kotlin & Robolectric harness)
+│       └── androidTest/                    # On-device instrumented tests (DeviceEvaluationTest)
 ├── docs/                                   # Architectural & verification documentation
-│   ├── baseline_real.md                    # Measured Phase 0 baseline evaluation record
-│   └── after.md                            # Post-overhaul verification report with measured metrics
+│   ├── baseline_r3.md                      # Measured Round 3 baseline evaluation record
+│   ├── after.md                            # Post-overhaul verification report with measured metrics
+│   ├── claims_audit.md                     # Claims audit cross-referencing findings F1 through F16
+│   └── MANUAL_TEST_PLAN.md                 # Physical device & emulator manual verification procedures
 ├── tools/                                  # Developer and evaluation scripts
-│   ├── generate_extended_corpus.py         # 15-document evaluation corpus generator (PyMuPDF)
-│   ├── evaluate.py                         # Strict pipeline evaluation & metric calculation
+│   ├── generate_extended_corpus.py         # Comprehensive evaluation corpus generator (PyMuPDF)
+│   ├── evaluate.py                         # Strict mechanical evaluation & metric calculation
+│   ├── make_report.py                      # Report generator translating results.json to after.md
 │   └── test_evaluate.py                    # Unit tests for evaluator metrics
 ├── testdata/                               # Evaluation datasets
-│   └── corpus/                             # 15 corpus PDFs & golden Markdown ground truths
+│   └── corpus/                             # 34 corpus PDFs & golden Markdown ground truths
 ├── gradle/                                 # Gradle wrapper and version catalog (libs.versions.toml)
 ├── build.gradle.kts                        # Root project build configuration
 ├── settings.gradle.kts                     # Gradle settings & repository definitions
@@ -81,7 +85,7 @@ markdrop/
 - **Language**: Kotlin 2.1.0 (JVM target 17)
 - **Framework**: Jetpack Compose 2025.02.00 (BOM), Material 3 1.4.0-alpha09
 - **Build System**: Android Gradle Plugin (AGP) 8.8.2, Gradle 8.10.2
-- **Database**: AndroidX Room 2.6.1 with KSP (v3 schema with `MIGRATION_1_2` and `MIGRATION_2_3`)
+- **Database**: AndroidX Room 2.6.1 with KSP (v4 schema with `MIGRATION_1_2`, `MIGRATION_2_3`, and `MIGRATION_3_4`)
 - **Background Tasks**: AndroidX WorkManager 2.10.0 (Foreground Service)
 - **Preferences**: Jetpack DataStore Preferences 1.1.2
 - **Security**: AndroidX Security Crypto 1.1.0-alpha06 (AES-256-GCM)
