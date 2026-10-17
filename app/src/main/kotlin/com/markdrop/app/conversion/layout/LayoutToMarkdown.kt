@@ -41,14 +41,27 @@ object LayoutToMarkdown {
             sb.append("> [!WARNING] Low OCR confidence detected on this page (average ${((page.averageConfidence * 100).roundToInt())}%). Scanned handwriting or low-contrast text may have approximate transcription.\n\n")
         }
 
-        // Emit figures at top if above blocks
+        val placedFigures = mutableSetOf<FigureBox>()
+
+        // 1. Emit figures at top if above first block
         for (fig in page.figures) {
-            if (blocks.isNotEmpty() && fig.bottom <= blocks.first().top) {
-                sb.append("> **Figure:** (image on this page — not transcribed in Offline mode)\n\n")
+            if (blocks.isEmpty() || fig.bottom <= blocks.first().top) {
+                if (placedFigures.add(fig)) {
+                    sb.append("> **Figure:** (image on this page — not transcribed in Offline mode)\n\n")
+                }
             }
         }
 
         blocks.forEachIndexed { index, block ->
+            for (fig in page.figures) {
+                if (!placedFigures.contains(fig) && fig.bottom <= block.top + 10f) {
+                    if (placedFigures.add(fig)) {
+                        if (sb.isNotEmpty() && !sb.endsWith("\n\n")) sb.append("\n\n")
+                        sb.append("> **Figure:** (image on this page — not transcribed in Offline mode)\n\n")
+                    }
+                }
+            }
+
             val formatted = formatBlock(block.lines, bodyModeSize)
             if (formatted.isNotBlank()) {
                 if (sb.isNotEmpty() && !sb.endsWith("\n\n")) {
@@ -56,14 +69,23 @@ object LayoutToMarkdown {
                 }
                 sb.append(formatted)
 
-                // Check for figures embedded within blocks
-                val blockBottom = block.bottom
+                // Check for figures embedded between this block and next block
                 val nextBlockTop = blocks.getOrNull(index + 1)?.top ?: Float.MAX_VALUE
                 for (fig in page.figures) {
-                    if (fig.top >= blockBottom - 20f && fig.bottom <= nextBlockTop + 20f) {
-                        sb.append("\n\n> **Figure:** (image on this page — not transcribed in Offline mode)\n\n")
+                    if (!placedFigures.contains(fig) && fig.top >= block.bottom - 20f && fig.bottom <= nextBlockTop + 20f) {
+                        if (placedFigures.add(fig)) {
+                            sb.append("\n\n> **Figure:** (image on this page — not transcribed in Offline mode)\n\n")
+                        }
                     }
                 }
+            }
+        }
+
+        // Remaining unplaced figures at bottom
+        for (fig in page.figures) {
+            if (placedFigures.add(fig)) {
+                if (sb.isNotEmpty() && !sb.endsWith("\n\n")) sb.append("\n\n")
+                sb.append("> **Figure:** (image on this page — not transcribed in Offline mode)\n\n")
             }
         }
 

@@ -67,16 +67,36 @@ class ConversionWorker(
             showCompletionNotification(job.fileName)
             Result.success(workDataOf(KEY_JOB_ID to jobId))
         } catch (e: Exception) {
-            if (isStopped || e is kotlinx.coroutines.CancellationException || e is com.markdrop.app.conversion.ConversionCancelledException) {
+            val reason = stopReason
+            val isExplicitCancel = reason == androidx.work.WorkInfo.STOP_REASON_CANCELLED_BY_APP ||
+                    reason == androidx.work.WorkInfo.STOP_REASON_USER ||
+                    e is com.markdrop.app.conversion.ConversionCancelledException
+
+            if (isExplicitCancel) {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                     db.conversionDao().updateStatus(jobId, ConversionStatus.CANCELLED)
                 }
                 Result.failure(workDataOf("cancelled" to true))
+            } else if (isStopped) {
+                // Stopped due to system constraints (connectivity, battery, preemption) or timeout
+                // Do not mark failed; preserve partial per-page results and request WorkManager retry with backoff
+                Result.retry()
             } else {
                 db.conversionDao().markFailed(jobId, e.message ?: "Conversion failed")
                 showFailureNotification(job.fileName, e.message)
                 Result.failure(workDataOf("error" to (e.message ?: "Unknown error")))
             }
+        }
+    }
+
+    private fun hasNotificationPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } else {
+            true
         }
     }
 
@@ -104,25 +124,31 @@ class ConversionWorker(
     }
 
     private fun showCompletionNotification(fileName: String) {
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setContentTitle("Conversion Complete")
-            .setContentText("$fileName was converted successfully.")
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setAutoCancel(true)
-            .build()
+        if (!hasNotificationPermission()) return
+        try {
+            val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+                .setContentTitle("Conversion Complete")
+                .setContentText("$fileName was converted successfully.")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setAutoCancel(true)
+                .build()
 
-        notificationManager.notify(NOTIFICATION_ID + 1, notification)
+            notificationManager.notify(NOTIFICATION_ID + 1, notification)
+        } catch (_: Exception) {}
     }
 
     private fun showFailureNotification(fileName: String, error: String?) {
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setContentTitle("Conversion Failed")
-            .setContentText("Could not convert $fileName: ${error?.take(80) ?: "Unknown error"}")
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setAutoCancel(true)
-            .build()
+        if (!hasNotificationPermission()) return
+        try {
+            val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+                .setContentTitle("Conversion Failed")
+                .setContentText("Could not convert $fileName: ${error?.take(80) ?: "Unknown error"}")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setAutoCancel(true)
+                .build()
 
-        notificationManager.notify(NOTIFICATION_ID + 2, notification)
+            notificationManager.notify(NOTIFICATION_ID + 2, notification)
+        } catch (_: Exception) {}
     }
 
     private fun createNotificationChannel() {

@@ -1,6 +1,5 @@
 {
   "expectedFailures": {
-    "digital_with_raster_figure": "F11: raster figure box placed at hardcoded coordinates",
     "digital_math": "F15: reading order and alignment on sub/superscript math formulas",
     "digital_with_figures": "F3: vector figure text ordering and placement",
     "mixed_slides": "F3: slide box layout ordering across multi-column slide items"
