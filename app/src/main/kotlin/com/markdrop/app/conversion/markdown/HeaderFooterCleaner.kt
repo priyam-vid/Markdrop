@@ -77,6 +77,11 @@ object HeaderFooterCleaner {
             val filteredLines = mutableListOf<String>()
             page.originalLines.forEachIndexed { index, line ->
                 val trimmed = line.trim()
+                if (trimmed.startsWith("<!--")) {
+                    filteredLines.add(line)
+                    return@forEachIndexed
+                }
+
                 val isTopCandidate = page.topCandidateIndices.contains(index)
                 val isBottomCandidate = page.bottomCandidateIndices.contains(index)
 

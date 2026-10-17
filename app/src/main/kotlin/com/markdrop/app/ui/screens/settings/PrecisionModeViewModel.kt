@@ -29,6 +29,15 @@ class PrecisionModeViewModel(
 
     val hfTokenFlow = settingsRepository.conversionSettingsFlow
 
+    private val _isModelVerified = MutableStateFlow(false)
+    val isModelVerified: StateFlow<Boolean> = _isModelVerified.asStateFlow()
+
+    private val _isVerifying = MutableStateFlow(false)
+    val isVerifying: StateFlow<Boolean> = _isVerifying.asStateFlow()
+
+    private val _verificationMessage = MutableStateFlow<String?>(null)
+    val verificationMessage: StateFlow<String?> = _verificationMessage.asStateFlow()
+
     init {
         viewModelScope.launch {
             settingsRepository.conversionSettingsFlow.collect { settings ->
@@ -36,6 +45,9 @@ class PrecisionModeViewModel(
                 val model = DefaultModelManifest.getModelById(modelId) ?: DefaultModelManifest.DEFAULT
                 _selectedModel.value = model
                 modelManager.checkLocalModel(model)
+                settingsRepository.isLocalModelVerified(modelId).collect { verified ->
+                    _isModelVerified.value = verified
+                }
             }
         }
         viewModelScope.launch {
@@ -43,6 +55,7 @@ class PrecisionModeViewModel(
                 if (state is ModelDownloadState.Downloaded) {
                     settingsRepository.setPrecisionModeEnabled(true)
                     settingsRepository.setPrecisionModelId(_selectedModel.value.modelId)
+                    runSmokeTest()
                 }
             }
         }
@@ -84,6 +97,41 @@ class PrecisionModeViewModel(
     }
 
     fun isModelReady(): Boolean = modelManager.isModelReady(_selectedModel.value)
+
+    fun runSmokeTest() {
+        val model = _selectedModel.value
+        val modelPath = modelManager.getModelPath(model)
+        viewModelScope.launch {
+            _isVerifying.value = true
+            _verificationMessage.value = "Running vision smoke test on ${model.displayName}..."
+            try {
+                val engine = com.markdrop.app.conversion.local.LocalLlmEngine(
+                    context = getApplication(),
+                    modelPath = modelPath,
+                    manifest = model
+                )
+                val testResult = engine.runSmokeTest()
+                engine.close()
+                if (testResult.isSuccess) {
+                    settingsRepository.setLocalModelVerified(model.modelId, verified = true)
+                    _isModelVerified.value = true
+                    _verificationMessage.value = "Verified! Smoke test passed successfully."
+                } else {
+                    val err = testResult.exceptionOrNull()?.message ?: "Smoke test failed"
+                    settingsRepository.setLocalModelVerified(model.modelId, verified = false, failureReason = err)
+                    _isModelVerified.value = false
+                    _verificationMessage.value = "Verification failed: $err"
+                }
+            } catch (e: Exception) {
+                val err = e.message ?: "Verification error"
+                settingsRepository.setLocalModelVerified(model.modelId, verified = false, failureReason = err)
+                _isModelVerified.value = false
+                _verificationMessage.value = "Verification error: $err"
+            } finally {
+                _isVerifying.value = false
+            }
+        }
+    }
 
     class Factory(
         private val application: Application,

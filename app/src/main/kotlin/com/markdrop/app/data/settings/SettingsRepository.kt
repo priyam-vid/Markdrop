@@ -33,6 +33,7 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         val SAVE_DIAGNOSTICS_ENABLED = booleanPreferencesKey("save_diagnostics_enabled")
         val AI_USE_EMBEDDED_TEXT_LAYER = booleanPreferencesKey("ai_use_embedded_text_layer")
         val AI_SOURCE = stringPreferencesKey("ai_source")
+        val FALLBACK_TO_OCR_ON_ERROR = booleanPreferencesKey("fallback_to_ocr_on_error")
     }
 
     val themeSettingsFlow: Flow<ThemeSettings> = dataStore.data.map { preferences ->
@@ -83,7 +84,8 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
             advancedModeExplainerShown = preferences[Keys.ADVANCED_MODE_EXPLAINER_SHOWN] ?: false,
             stripHeaderFooterEnabled = preferences[Keys.STRIP_HEADER_FOOTER_ENABLED] ?: true,
             aiUseEmbeddedTextLayer = preferences[Keys.AI_USE_EMBEDDED_TEXT_LAYER] ?: false,
-            aiSource = preferences[Keys.AI_SOURCE] ?: "AUTO"
+            aiSource = preferences[Keys.AI_SOURCE] ?: "AUTO",
+            fallbackToOcrOnError = preferences[Keys.FALLBACK_TO_OCR_ON_ERROR] ?: false
         )
     }
 
@@ -205,5 +207,27 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setAiSource(aiSource: String) {
         dataStore.edit { preferences -> preferences[Keys.AI_SOURCE] = aiSource }
+    }
+
+    suspend fun setFallbackToOcrOnError(enabled: Boolean) {
+        dataStore.edit { preferences -> preferences[Keys.FALLBACK_TO_OCR_ON_ERROR] = enabled }
+    }
+
+    fun isLocalModelVerified(modelId: String): Flow<Boolean> {
+        val key = booleanPreferencesKey("local_model_verified_${modelId.replace("/", "_").lowercase()}")
+        return dataStore.data.map { prefs -> prefs[key] ?: false }
+    }
+
+    suspend fun setLocalModelVerified(modelId: String, verified: Boolean, failureReason: String? = null) {
+        val verifiedKey = booleanPreferencesKey("local_model_verified_${modelId.replace("/", "_").lowercase()}")
+        val reasonKey = stringPreferencesKey("local_model_verify_reason_${modelId.replace("/", "_").lowercase()}")
+        dataStore.edit { prefs ->
+            prefs[verifiedKey] = verified
+            if (failureReason != null) {
+                prefs[reasonKey] = failureReason
+            } else {
+                prefs.remove(reasonKey)
+            }
+        }
     }
 }

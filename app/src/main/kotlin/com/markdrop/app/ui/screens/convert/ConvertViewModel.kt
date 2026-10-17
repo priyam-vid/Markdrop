@@ -48,7 +48,8 @@ data class ConvertScreenUiState(
     val configuredModelName: String = "",
     val promptPricePerToken: Double? = null,
     val deviceRamGb: Double = 0.0,
-    val isRamSufficient: Boolean = true
+    val isRamSufficient: Boolean = true,
+    val effectiveEngineSummary: String = ""
 )
 
 class ConvertViewModel(
@@ -63,6 +64,24 @@ class ConvertViewModel(
 
     init {
         refreshAvailability()
+    }
+
+    private fun computeSummary(
+        mode: ConversionMode,
+        provider: String,
+        model: String,
+        pdfInfo: SelectedPdfInfo?,
+        selectedPages: Set<Int>
+    ): String {
+        val totalPdfPages = pdfInfo?.pageCount ?: 1
+        val selectedCount = if (selectedPages.isEmpty()) totalPdfPages else selectedPages.size
+        val pageStr = if (selectedCount == totalPdfPages) "$totalPdfPages pages" else "$selectedCount of $totalPdfPages pages"
+
+        return if (mode.isAi) {
+            "AI · $provider ($model) · $pageStr"
+        } else {
+            "Offline · text-layer / ML Kit OCR · $pageStr"
+        }
     }
 
     fun refreshAvailability() {
@@ -81,14 +100,22 @@ class ConvertViewModel(
             val isRamSufficient = ramGb >= manifest.minRamGb
             val pricing = app.settingsRepository.getModelPricing(activeModel).first()
 
-            _uiState.value = _uiState.value.copy(
+            val current = _uiState.value
+            _uiState.value = current.copy(
                 isPrecisionAvailable = isModelReady,
                 isAdvancedAvailable = hasKey,
                 configuredProviderName = activeProvider.displayName,
                 configuredModelName = activeModel,
                 promptPricePerToken = pricing,
                 deviceRamGb = ramGb,
-                isRamSufficient = isRamSufficient
+                isRamSufficient = isRamSufficient,
+                effectiveEngineSummary = computeSummary(
+                    mode = current.selectedMode,
+                    provider = activeProvider.displayName,
+                    model = activeModel,
+                    pdfInfo = current.selectedPdf,
+                    selectedPages = current.selectedPageIndices
+                )
             )
         }
     }
@@ -113,11 +140,31 @@ class ConvertViewModel(
     }
 
     fun setSelectedPages(pages: Set<Int>) {
-        _uiState.value = _uiState.value.copy(selectedPageIndices = pages)
+        val current = _uiState.value
+        _uiState.value = current.copy(
+            selectedPageIndices = pages,
+            effectiveEngineSummary = computeSummary(
+                mode = current.selectedMode,
+                provider = current.configuredProviderName,
+                model = current.configuredModelName,
+                pdfInfo = current.selectedPdf,
+                selectedPages = pages
+            )
+        )
     }
 
     fun selectMode(mode: ConversionMode) {
-        _uiState.value = _uiState.value.copy(selectedMode = mode)
+        val current = _uiState.value
+        _uiState.value = current.copy(
+            selectedMode = mode,
+            effectiveEngineSummary = computeSummary(
+                mode = mode,
+                provider = current.configuredProviderName,
+                model = current.configuredModelName,
+                pdfInfo = current.selectedPdf,
+                selectedPages = current.selectedPageIndices
+            )
+        )
     }
 
     fun startConversion() {

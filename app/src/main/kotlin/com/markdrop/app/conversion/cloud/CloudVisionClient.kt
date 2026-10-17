@@ -28,6 +28,7 @@ sealed class VisionException(message: String, cause: Throwable? = null) : Runtim
     class Truncated(val partialText: String, message: String) : VisionException(message)
     class Network(message: String, cause: Throwable? = null) : VisionException(message, cause)
     class BadRequest(message: String) : VisionException(message)
+    class ModelNotFound(message: String) : VisionException(message)
 }
 
 class CloudVisionClient : Closeable {
@@ -72,9 +73,17 @@ class CloudVisionClient : Closeable {
     }
 
     private fun createTestBitmap(): Bitmap {
-        return Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).apply {
-            eraseColor(android.graphics.Color.WHITE)
+        val bitmap = Bitmap.createBitmap(200, 60, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        canvas.drawColor(android.graphics.Color.WHITE)
+        val paint = android.graphics.Paint().apply {
+            color = android.graphics.Color.BLACK
+            textSize = 28f
+            isAntiAlias = true
+            textAlign = android.graphics.Paint.Align.CENTER
         }
+        canvas.drawText("MARKDROP", 100f, 40f, paint)
+        return bitmap
     }
 
     private suspend fun postWithRetry(
@@ -106,6 +115,10 @@ class CloudVisionClient : Closeable {
                 HttpStatusCode.BadRequest -> {
                     val body = response.bodyAsText().take(200)
                     throw VisionException.BadRequest("Bad request error (${response.status.value}): $body")
+                }
+                HttpStatusCode.NotFound -> {
+                    val body = response.bodyAsText().take(200)
+                    throw VisionException.ModelNotFound("Model or endpoint not found (404): $body")
                 }
                 HttpStatusCode.TooManyRequests -> {
                     if (attempt < maxRetries) {

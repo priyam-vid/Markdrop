@@ -670,7 +670,7 @@ private fun PreFlightEstimatorCard(
 
             if (mode.isOffline) {
                 Text(
-                    text = "• Pages: $selectedPagesCount of $totalPages\n• Cost: $0.00 (100% Free & Offline)\n• Engine: Text Layer + ML Kit OCR",
+                    text = "• Effective Engine: Offline · text-layer / ML Kit OCR\n• Pages: $selectedPagesCount of $totalPages\n• Cost: $0.00 (100% Free & Offline)",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -688,7 +688,7 @@ private fun PreFlightEstimatorCard(
                 }
 
                 Text(
-                    text = "• Pages: $selectedPagesCount of $totalPages\n• Target: $configuredProvider ($configuredModel)\n• Est. Tokens: ~$estTotalTokens (~$estInputTokens in / ~$estOutputTokens out)\n• Est. API Cost: ~$costEstimate USD (billed directly by provider)",
+                    text = "• Effective Engine: AI · $configuredProvider · $configuredModel\n• Pages: $selectedPagesCount of $totalPages\n• Est. Tokens: ~$estTotalTokens (~$estInputTokens in / ~$estOutputTokens out)\n• Est. API Cost: ~$costEstimate USD (billed directly by provider)",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

@@ -41,6 +41,9 @@ class SettingsViewModel(private val settingsRepository: SettingsRepository) : Vi
     fun setAdvancedModeEnabled(enabled: Boolean) { viewModelScope.launch { settingsRepository.setAdvancedModeEnabled(enabled) } }
     fun setAdvancedModeExplainerShown(shown: Boolean) { viewModelScope.launch { settingsRepository.setAdvancedModeExplainerShown(shown) } }
     fun setStripHeaderFooterEnabled(enabled: Boolean) { viewModelScope.launch { settingsRepository.setStripHeaderFooterEnabled(enabled) } }
+    fun setAiSource(source: String) { viewModelScope.launch { settingsRepository.setAiSource(source) } }
+    fun setAiUseEmbeddedTextLayer(enabled: Boolean) { viewModelScope.launch { settingsRepository.setAiUseEmbeddedTextLayer(enabled) } }
+    fun setFallbackToOcrOnError(enabled: Boolean) { viewModelScope.launch { settingsRepository.setFallbackToOcrOnError(enabled) } }
     
     class Factory(private val settingsRepository: SettingsRepository) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")

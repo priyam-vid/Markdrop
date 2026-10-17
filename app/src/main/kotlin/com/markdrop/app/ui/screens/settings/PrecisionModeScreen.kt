@@ -52,6 +52,9 @@ fun PrecisionModeScreen(
     )
     val downloadState by viewModel.downloadState.collectAsStateWithLifecycle()
     val selectedModel by viewModel.selectedModel.collectAsStateWithLifecycle()
+    val isModelVerified by viewModel.isModelVerified.collectAsStateWithLifecycle()
+    val isVerifying by viewModel.isVerifying.collectAsStateWithLifecycle()
+    val verificationMessage by viewModel.verificationMessage.collectAsStateWithLifecycle()
     val conversionSettings by viewModel.hfTokenFlow.collectAsStateWithLifecycle(
         initialValue = ConversionSettings()
     )
@@ -65,7 +68,7 @@ fun PrecisionModeScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("On-Device AI (Precision)") },
+                title = { Text("On-Device AI (Experimental)") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
@@ -366,16 +369,71 @@ fun PrecisionModeScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            OutlinedButton(
-                                onClick = {
-                                    HapticHelper.performHaptic(view, HapticType.MEDIUM, true)
-                                    viewModel.deleteModel()
-                                },
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+
+                            // Verification status
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(Icons.Rounded.Delete, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Delete Model Weights")
+                                Icon(
+                                    imageVector = if (isModelVerified) Icons.Rounded.CheckCircle else Icons.Rounded.Warning,
+                                    contentDescription = null,
+                                    tint = if (isModelVerified) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = if (isModelVerified) "Model Verified via Vision Smoke Test" else "Model Unverified (Smoke Test Pending/Failed)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (isModelVerified) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                )
+                            }
+
+                            if (verificationMessage != null) {
+                                Text(
+                                    text = verificationMessage ?: "",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        HapticHelper.performHaptic(view, HapticType.MEDIUM, true)
+                                        viewModel.runSmokeTest()
+                                    },
+                                    enabled = !isVerifying,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    if (isVerifying) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                            color = MaterialTheme.colorScheme.onPrimary
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Verifying...")
+                                    } else {
+                                        Icon(Icons.Rounded.PlayArrow, contentDescription = null)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Verify Model")
+                                    }
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        HapticHelper.performHaptic(view, HapticType.MEDIUM, true)
+                                        viewModel.deleteModel()
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Icon(Icons.Rounded.Delete, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Delete")
+                                }
                             }
                         }
                     }

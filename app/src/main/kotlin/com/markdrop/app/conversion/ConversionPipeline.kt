@@ -6,7 +6,10 @@ import android.graphics.Bitmap
 import com.markdrop.app.conversion.image.ImageLoader
 import com.markdrop.app.conversion.pdf.PageSelectionParser
 import com.markdrop.app.conversion.assemble.Assembler
+import com.markdrop.app.conversion.cloud.AiErrorPolicy
+import com.markdrop.app.conversion.cloud.CloudConfig
 import com.markdrop.app.conversion.cloud.CloudVisionClient
+import com.markdrop.app.conversion.cloud.PageErrorAction
 import com.markdrop.app.conversion.layout.LayoutPage
 import com.markdrop.app.conversion.layout.LayoutToMarkdown
 import com.markdrop.app.conversion.local.LocalLlmEngine
@@ -73,11 +76,19 @@ class ConversionPipeline(
         val settings = app.settingsRepository.conversionSettingsFlow.first()
         val modelId = settings.precisionModelId ?: DefaultModelManifest.DEFAULT.modelId
         val manifest = DefaultModelManifest.getModelById(modelId) ?: DefaultModelManifest.DEFAULT
-        val hasLocalAi = app.modelManager.isModelReady(manifest)
+        val isLocalModelVerified = app.settingsRepository.isLocalModelVerified(manifest.modelId).first()
+        val hasLocalAi = app.modelManager.isModelReady(manifest) && isLocalModelVerified
 
         val aiSource = settings.aiSource // AUTO, CLOUD, LOCAL
         val useCloud = isAiMode && (aiSource == "CLOUD" || (aiSource == "AUTO" && hasCloudKey))
         val useLocal = isAiMode && !useCloud && (aiSource == "LOCAL" || (aiSource == "AUTO" && hasLocalAi))
+
+        val resolvedCloudConfig = if (useCloud) {
+            CloudConfig.resolve(secureKeyStore).getOrElse { err ->
+                db.conversionDao().markFailed(jobId, err.message ?: "Cloud configuration error")
+                throw err
+            }
+        } else null
 
         if (isAiMode && !useCloud && !useLocal) {
             val provider = secureKeyStore.getSelectedProvider()
@@ -85,15 +96,19 @@ class ConversionPipeline(
                 db.conversionDao().markFailed(jobId, "API key for ${provider.displayName} is missing. Please add your key in Settings.")
                 throw ApiKeyMissingException(provider.displayName)
             } else if (aiSource == "LOCAL") {
-                db.conversionDao().markFailed(jobId, "Local AI model '${manifest.displayName}' is not ready. Please download it in Settings.")
+                val reason = if (!app.modelManager.isModelReady(manifest)) "is not ready. Please download it in Settings." else "is unverified. Please run smoke test verification."
+                db.conversionDao().markFailed(jobId, "Local AI model '${manifest.displayName}' $reason")
                 throw ModelNotReadyException(manifest.displayName)
             }
         }
 
-        val cloudClient = if (useCloud) CloudVisionClient() else null
+        val cloudClient = if (resolvedCloudConfig != null) CloudVisionClient() else null
         val localLlm = if (useLocal) {
-            LocalLlmEngine(context, app.modelManager.getModelPath(manifest))
+            LocalLlmEngine(context, app.modelManager.getModelPath(manifest), manifest)
         } else null
+
+        val aiErrorPolicy = AiErrorPolicy(fallbackToOcrOnError = settings.fallbackToOcrOnError)
+        var hasAnyFallback = false
 
         val textSession: TextLayerSession? = if (pdfRenderer != null) {
             try {
@@ -141,6 +156,7 @@ class ConversionPipeline(
                 var pageMarkdown = ""
                 var engineUsed = "UNKNOWN"
                 var pageError: String? = null
+                var pageStatus = "DONE"
 
                 try {
                     // Step 1: Check for usable embedded text layer (born-digital PDFs)
@@ -180,20 +196,18 @@ class ConversionPipeline(
                             onProgress(progressIndex + 1, totalPages, "Transcribing page ${progressIndex + 1} of $totalPages via AI...")
                             val bitmap = loadBitmap(isOcr = false)
                             try {
-                                if (cloudClient != null) {
-                                    val provider = secureKeyStore.getSelectedProvider()
-                                    val apiKey = secureKeyStore.getApiKey(provider) ?: ""
-                                    val model = secureKeyStore.getSelectedModel(provider)
+                                if (cloudClient != null && resolvedCloudConfig != null) {
                                     pageMarkdown = cloudClient.transcribePage(
                                         bitmap = bitmap,
-                                        provider = provider,
-                                        apiKey = apiKey,
-                                        model = model,
+                                        provider = resolvedCloudConfig.provider,
+                                        apiKey = resolvedCloudConfig.apiKey,
+                                        model = resolvedCloudConfig.model,
                                         pageNumber = progressIndex + 1,
                                         totalPages = totalPages,
                                         previousTail = lastCompletedMarkdown?.takeLast(400)
                                     )
-                                    engineUsed = "VISION_AI_CLOUD ($model)"
+                                    engineUsed = "VISION_AI_CLOUD (${resolvedCloudConfig.model})"
+                                    aiErrorPolicy.recordSuccess()
                                 } else if (localLlm != null) {
                                     pageMarkdown = localLlm.transcribePage(
                                         bitmap = bitmap,
@@ -202,15 +216,43 @@ class ConversionPipeline(
                                         previousTail = lastCompletedMarkdown?.takeLast(400)
                                     )
                                     engineUsed = "VISION_AI_LOCAL (${manifest.displayName})"
+                                    aiErrorPolicy.recordSuccess()
                                 }
                             } catch (e: Exception) {
                                 if (e is CancellationException) throw e
-                                // Per brief 3.1: Fall back to Offline for that page and flag it in the final document; do not fail the job!
-                                onProgress(progressIndex + 1, totalPages, "AI error on page ${progressIndex + 1}, falling back to OCR...")
-                                val ocrResult = ocrEngine.processImage(bitmap, pageIndex)
-                                val ocrMd = LayoutToMarkdown.formatOcr(ocrResult)
-                                pageMarkdown = "> [!NOTE] Transcribed via on-device OCR fallback (AI error: ${e.message?.take(80)})\n\n$ocrMd"
-                                engineUsed = "FALLBACK_OCR"
+
+                                // 1. Immediate fail-fast abort on Auth, BadRequest, ModelNotFound (404)
+                                if (aiErrorPolicy.isFailFast(e)) {
+                                    val prov = resolvedCloudConfig?.provider?.displayName ?: "Local AI"
+                                    val mod = resolvedCloudConfig?.model ?: manifest.displayName
+                                    val fatalMsg = "AI Error [$prov ($mod)]: ${e.message}"
+                                    db.conversionDao().markFailed(jobId, fatalMsg)
+                                    throw e
+                                }
+
+                                // 2. Circuit breaker trips after 3 consecutive identical page failures
+                                if (aiErrorPolicy.recordErrorAndCheckTripped(e)) {
+                                    val breakerMsg = "Circuit breaker tripped after 3 consecutive failures (${e.javaClass.simpleName}): ${e.message}"
+                                    db.conversionDao().markFailed(jobId, breakerMsg)
+                                    throw IllegalStateException(breakerMsg, e)
+                                }
+
+                                // 3. Handle page error according to fallback switch
+                                val decision = aiErrorPolicy.handlePageError(pageIndex, e)
+                                if (decision.action == PageErrorAction.FALLBACK_TO_OCR) {
+                                    onProgress(progressIndex + 1, totalPages, "AI error on page ${progressIndex + 1}, falling back to OCR...")
+                                    val ocrResult = ocrEngine.processImage(bitmap, pageIndex)
+                                    val ocrMd = LayoutToMarkdown.formatOcr(ocrResult)
+                                    pageMarkdown = "${decision.markerComment}\n\n$ocrMd"
+                                    engineUsed = "FALLBACK_OCR"
+                                    pageStatus = "FALLBACK"
+                                    hasAnyFallback = true
+                                } else {
+                                    pageError = e.message ?: "AI transcription error"
+                                    pageMarkdown = decision.markerComment ?: "<!-- Error transcribing page ${pageIndex + 1} -->"
+                                    engineUsed = "AI_ERROR"
+                                    pageStatus = "FAILED"
+                                }
                             } finally {
                                 bitmap.recycle()
                             }
@@ -232,6 +274,7 @@ class ConversionPipeline(
                     pageError = e.message ?: "Page processing error"
                     pageMarkdown = "<!-- Error transcribing page ${pageIndex + 1}: $pageError -->"
                     engineUsed = "ERROR"
+                    pageStatus = "FAILED"
                 }
 
                 val pageDuration = System.currentTimeMillis() - pageStart
@@ -240,7 +283,7 @@ class ConversionPipeline(
                 val pageEntity = PageResultEntity(
                     jobId = jobId,
                     pageIndex = pageIndex,
-                    status = if (pageError == null) "DONE" else "FAILED",
+                    status = pageStatus,
                     markdown = pageMarkdown,
                     error = pageError,
                     durationMs = pageDuration,
@@ -264,7 +307,7 @@ class ConversionPipeline(
             val finalMarkdown = Assembler.assemble(cleanedPages)
 
             val duration = System.currentTimeMillis() - startTime
-            val hasErrors = allResults.any { it.status == "FAILED" }
+            val hasErrors = allResults.any { it.status == "FAILED" || it.status == "FALLBACK" }
             val finalStatus = if (hasErrors) ConversionStatus.PARTIAL else ConversionStatus.DONE
 
             // Save to filesDir

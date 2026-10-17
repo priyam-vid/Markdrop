@@ -194,6 +194,58 @@ fun SettingsScreen(
                 }
             }
 
+            Text(
+                text = "AI Conversion Options",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+
+            val aiSources = listOf("AUTO", "CLOUD", "LOCAL")
+            val aiSourceLabels = listOf("Auto", "Cloud", "On-Device")
+            Text(
+                text = "AI Source",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+            SingleChoiceSegmentedButtonRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                aiSources.forEachIndexed { index, source ->
+                    SegmentedButton(
+                        selected = uiState.conversionSettings.aiSource == source,
+                        onClick = { viewModel.setAiSource(source) },
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = aiSources.size)
+                    ) {
+                        Text(aiSourceLabels[index])
+                    }
+                }
+            }
+
+            ListItem(
+                headlineContent = { Text("Use embedded text for plain digital pages") },
+                supportingContent = { Text("Saves API cost by using native text layer when pages lack tables, figures, and math") },
+                trailingContent = {
+                    Switch(
+                        checked = uiState.conversionSettings.aiUseEmbeddedTextLayer,
+                        onCheckedChange = { viewModel.setAiUseEmbeddedTextLayer(it) }
+                    )
+                }
+            )
+
+            ListItem(
+                headlineContent = { Text("Fallback to offline OCR on AI error") },
+                supportingContent = { Text("Transcribes affected page via on-device OCR instead of failing the page") },
+                trailingContent = {
+                    Switch(
+                        checked = uiState.conversionSettings.fallbackToOcrOnError,
+                        onCheckedChange = { viewModel.setFallbackToOcrOnError(it) }
+                    )
+                }
+            )
+
             ListItem(
                 headlineContent = { Text("Strip Headers & Footers") },
                 supportingContent = { Text("Automatically remove recurring page headers, footers, and page numbers from generated Markdown") },

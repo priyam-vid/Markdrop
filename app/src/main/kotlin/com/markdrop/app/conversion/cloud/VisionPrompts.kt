@@ -23,7 +23,7 @@ Rules
 
     const val PAGE_PROMPT = "Transcribe this page image into clean Markdown following the system instructions."
 
-    const val CONNECTION_TEST_PROMPT = "Respond with 'OK' if you can read this."
+    const val CONNECTION_TEST_PROMPT = "Read the single word printed in this image. Output only that word and nothing else."
 
     fun buildUserPrompt(pageNumber: Int, totalPages: Int, previousTail: String? = null): String {
         val sb = StringBuilder("Transcribe page $pageNumber of $totalPages.")
