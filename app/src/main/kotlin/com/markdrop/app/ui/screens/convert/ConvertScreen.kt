@@ -57,6 +57,8 @@ fun ConvertScreen(
         viewModel.refreshAvailability()
     }
 
+    var cameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
+
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -73,29 +75,20 @@ fun ConvertScreen(
     }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
+        contract = ActivityResultContracts.GetMultipleContents()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
             HapticHelper.performHaptic(view, HapticType.LIGHT, true)
-            viewModel.selectPdf(uri)
+            viewModel.selectImages(uris)
         }
     }
 
     val cameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview()
-    ) { bitmap ->
-        if (bitmap != null) {
-            try {
-                val tempFile = java.io.File(context.cacheDir, "camera_scan_${System.currentTimeMillis()}.jpg")
-                java.io.FileOutputStream(tempFile).use { out ->
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
-                }
-                val uri = Uri.fromFile(tempFile)
-                HapticHelper.performHaptic(view, HapticType.LIGHT, true)
-                viewModel.selectPdf(uri)
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to capture image: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success && cameraPhotoUri != null) {
+            HapticHelper.performHaptic(view, HapticType.LIGHT, true)
+            viewModel.selectImages(listOf(cameraPhotoUri!!))
         }
     }
 
@@ -163,7 +156,19 @@ fun ConvertScreen(
                     },
                     onTakePhoto = {
                         HapticHelper.performHaptic(view, HapticType.LIGHT, true)
-                        cameraLauncher.launch(null)
+                        try {
+                            val inputDir = java.io.File(context.filesDir, "inputs").apply { mkdirs() }
+                            val photoFile = java.io.File(inputDir, "camera_${System.currentTimeMillis()}.jpg")
+                            val photoUri = androidx.core.content.FileProvider.getUriForFile(
+                                context,
+                                "${context.packageName}.fileprovider",
+                                photoFile
+                            )
+                            cameraPhotoUri = photoUri
+                            cameraLauncher.launch(photoUri)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Could not open camera: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 )
             } else {

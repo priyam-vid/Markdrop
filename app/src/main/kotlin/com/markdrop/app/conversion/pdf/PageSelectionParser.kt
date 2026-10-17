@@ -38,4 +38,9 @@ object PageSelectionParser {
         val result = indices.sorted()
         return if (result.isNotEmpty()) result else (0 until totalPages).toList()
     }
+
+    fun serialize(pageIndices: List<Int>): String {
+        if (pageIndices.isEmpty()) return ""
+        return pageIndices.sorted().map { it + 1 }.joinToString(",")
+    }
 }

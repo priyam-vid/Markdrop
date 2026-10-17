@@ -22,5 +22,6 @@ data class ConversionEntity(
     val completedAt: Long? = null,
     val fileSizeBytes: Long = 0L,
     val durationMs: Long = 0L,
-    val selectedPages: String? = null
+    val selectedPages: String? = null,
+    val inputUris: String? = null
 )

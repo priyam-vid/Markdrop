@@ -95,6 +95,9 @@ class TextLayerSession private constructor(
             } catch (e: PdfOpenException) {
                 tempFile.delete()
                 throw e
+            } catch (e: java.io.FileNotFoundException) {
+                tempFile.delete()
+                throw PdfOpenException(PdfOpenError.NOT_FOUND, "Document file not found: ${e.message}", e)
             } catch (e: Exception) {
                 tempFile.delete()
                 throw PdfOpenException(PdfOpenError.CORRUPT, "Failed to open document: ${e.message}", e)

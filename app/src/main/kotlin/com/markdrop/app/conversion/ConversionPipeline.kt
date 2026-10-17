@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import android.graphics.Bitmap
 import com.markdrop.app.conversion.image.ImageLoader
+import com.markdrop.app.conversion.pdf.PdfProbe
+import com.markdrop.app.conversion.pdf.ProbeResult
 import com.markdrop.app.conversion.pdf.PageSelectionParser
 import com.markdrop.app.conversion.assemble.Assembler
 import com.markdrop.app.conversion.cloud.AiErrorPolicy
@@ -16,8 +18,6 @@ import com.markdrop.app.conversion.local.LocalLlmEngine
 import com.markdrop.app.conversion.markdown.HeaderFooterCleaner
 import com.markdrop.app.conversion.ocr.MlKitOcrEngine
 import com.markdrop.app.conversion.layout.PageGeometry
-import com.markdrop.app.conversion.pdf.PdfOpenError
-import com.markdrop.app.conversion.pdf.PdfOpenException
 import com.markdrop.app.conversion.pdf.PdfPageRenderer
 import com.markdrop.app.conversion.pdf.TextLayerExtractor
 import com.markdrop.app.conversion.pdf.TextLayerSession
@@ -54,20 +54,47 @@ class ConversionPipeline(
             ?: throw IllegalArgumentException("Job with ID $jobId not found")
 
         val pdfUri = Uri.parse(job.pdfUri)
+        val imageUris: List<Uri> = if (!job.inputUris.isNullOrBlank()) {
+            try {
+                kotlinx.serialization.json.Json.decodeFromString<List<String>>(job.inputUris).map { Uri.parse(it) }
+            } catch (_: Exception) {
+                job.inputUris.split("\n", ",").map { it.trim() }.filter { it.isNotEmpty() }.map { Uri.parse(it) }
+            }
+        } else {
+            emptyList()
+        }
+
         val mimeType = context.contentResolver.getType(pdfUri) ?: ""
-        val isImage = mimeType.startsWith("image/") ||
+        val isImage = imageUris.isNotEmpty() ||
+                mimeType.startsWith("image/") ||
                 job.fileName.endsWith(".png", true) ||
                 job.fileName.endsWith(".jpg", true) ||
                 job.fileName.endsWith(".jpeg", true) ||
                 job.fileName.endsWith(".webp", true)
 
-        val pdfRenderer = if (!isImage) {
-            try {
-                PdfPageRenderer(context, pdfUri)
-            } catch (_: Exception) {
-                null
+        val effectiveImageUris = if (isImage && imageUris.isEmpty()) listOf(pdfUri) else imageUris
+
+        val probeResult: ProbeResult? = if (!isImage) {
+            val probe = PdfProbe.open(context, pdfUri)
+            when (probe) {
+                is ProbeResult.Encrypted -> {
+                    db.conversionDao().markFailed(jobId, probe.message)
+                    throw PdfEncryptedException(probe.message)
+                }
+                is ProbeResult.Corrupted -> {
+                    db.conversionDao().markFailed(jobId, probe.message)
+                    throw PdfCorruptException(probe.message, cause = probe.cause)
+                }
+                is ProbeResult.NotFound -> {
+                    db.conversionDao().markFailed(jobId, probe.message)
+                    throw java.io.FileNotFoundException(probe.message)
+                }
+                is ProbeResult.Success -> probe
             }
         } else null
+
+        val textSession: TextLayerSession? = (probeResult as? ProbeResult.Success)?.textSession
+        val pdfRenderer: PdfPageRenderer? = (probeResult as? ProbeResult.Success)?.renderer
         val ocrEngine = MlKitOcrEngine()
 
         val isAiMode = job.mode.isAi
@@ -110,28 +137,10 @@ class ConversionPipeline(
         val aiErrorPolicy = AiErrorPolicy(fallbackToOcrOnError = settings.fallbackToOcrOnError)
         var hasAnyFallback = false
 
-        val textSession: TextLayerSession? = if (pdfRenderer != null) {
-            try {
-                TextLayerSession.open(context, pdfUri)
-            } catch (e: PdfOpenException) {
-                if (e.error == PdfOpenError.PASSWORD_REQUIRED) {
-                    db.conversionDao().markFailed(jobId, "PDF is password protected.")
-                    throw PdfEncryptedException()
-                } else if (e.error == PdfOpenError.CORRUPT) {
-                    db.conversionDao().markFailed(jobId, "PDF file is corrupted.")
-                    throw PdfCorruptException(cause = e)
-                }
-                null
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                null
-            }
-        } else null
-
         try {
             db.conversionDao().updateStatus(jobId, ConversionStatus.PROCESSING)
 
-            val totalPdfPages = pdfRenderer?.pageCount ?: 1
+            val totalPdfPages = if (isImage) effectiveImageUris.size else (pdfRenderer?.pageCount ?: 1)
             val pagesToProcess = PageSelectionParser.parse(job.selectedPages, totalPdfPages)
             val totalPages = pagesToProcess.size
 
@@ -187,7 +196,8 @@ class ConversionPipeline(
                                     throw PageRenderException(pageIndex, cause = e)
                                 }
                             } else {
-                                ImageLoader.loadImage(context, pdfUri, maxDimension = 2048)
+                                val imageUri = effectiveImageUris.getOrElse(pageIndex) { pdfUri }
+                                ImageLoader.loadImage(context, imageUri, maxDimension = 2048)
                             }
                         }
 
@@ -330,8 +340,7 @@ class ConversionPipeline(
                 mode = job.mode
             )
         } finally {
-            textSession?.close()
-            pdfRenderer?.close()
+            probeResult?.close()
             ocrEngine.close()
             cloudClient?.close()
             localLlm?.close()

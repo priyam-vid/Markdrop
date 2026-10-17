@@ -18,6 +18,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+import com.markdrop.app.conversion.pdf.PdfProbe
+import com.markdrop.app.conversion.pdf.ProbeResult
+import java.io.File
+
 sealed class ConvertStatus {
     object Idle : ConvertStatus()
     data class Converting(
@@ -34,7 +38,9 @@ data class SelectedPdfInfo(
     val uri: Uri,
     val name: String,
     val sizeBytes: Long,
-    val pageCount: Int
+    val pageCount: Int,
+    val isImage: Boolean = false,
+    val imageUris: List<Uri> = emptyList()
 )
 
 data class ConvertScreenUiState(
@@ -120,20 +126,138 @@ class ConvertViewModel(
         }
     }
 
+    private fun copyToAppStorage(uri: Uri, defaultName: String): File {
+        val context = getApplication<Application>()
+        val inputDir = File(context.filesDir, "inputs").apply { mkdirs() }
+        val ext = defaultName.substringAfterLast(".", "tmp")
+        val destFile = File(inputDir, "input_${System.currentTimeMillis()}_${(1000..9999).random()}.$ext")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            destFile.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        } ?: throw java.io.FileNotFoundException("Could not read input from $uri")
+        return destFile
+    }
+
     fun selectPdf(uri: Uri) {
         viewModelScope.launch {
             try {
-                val info = withContext(Dispatchers.IO) {
-                    queryPdfInfo(uri)
+                val context = getApplication<Application>()
+                var name = "document.pdf"
+                var size: Long = 0
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (nameIndex != -1) name = cursor.getString(nameIndex) ?: name
+                        val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                        if (sizeIndex != -1) size = cursor.getLong(sizeIndex)
+                    }
                 }
-                _uiState.value = _uiState.value.copy(
-                    selectedPdf = info,
-                    selectedPageIndices = (0 until info.pageCount).toSet(),
-                    status = ConvertStatus.Idle
-                )
+
+                val localFile = withContext(Dispatchers.IO) {
+                    copyToAppStorage(uri, name)
+                }
+                val localUri = Uri.fromFile(localFile)
+                if (size == 0L) size = localFile.length()
+
+                val probe = withContext(Dispatchers.IO) {
+                    PdfProbe.open(context, localUri)
+                }
+                when (probe) {
+                    is ProbeResult.Encrypted -> {
+                        _uiState.value = _uiState.value.copy(
+                            status = ConvertStatus.Error("This PDF is password protected and cannot be opened without a password.")
+                        )
+                    }
+                    is ProbeResult.Corrupted -> {
+                        _uiState.value = _uiState.value.copy(
+                            status = ConvertStatus.Error("This PDF file is corrupted or formatted improperly.")
+                        )
+                    }
+                    is ProbeResult.NotFound -> {
+                        _uiState.value = _uiState.value.copy(
+                            status = ConvertStatus.Error("Document file not found.")
+                        )
+                    }
+                    is ProbeResult.Success -> {
+                        val pageCount = probe.pageCount
+                        probe.close()
+                        val info = SelectedPdfInfo(
+                            uri = localUri,
+                            name = name,
+                            sizeBytes = size,
+                            pageCount = pageCount,
+                            isImage = false
+                        )
+                        _uiState.value = _uiState.value.copy(
+                            selectedPdf = info,
+                            selectedPageIndices = (0 until info.pageCount).toSet(),
+                            status = ConvertStatus.Idle,
+                            effectiveEngineSummary = computeSummary(
+                                mode = _uiState.value.selectedMode,
+                                provider = _uiState.value.configuredProviderName,
+                                model = _uiState.value.configuredModelName,
+                                pdfInfo = info,
+                                selectedPages = (0 until info.pageCount).toSet()
+                            )
+                        )
+                    }
+                }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     status = ConvertStatus.Error("Failed to load PDF: ${e.localizedMessage ?: "Unknown error"}")
+                )
+            }
+        }
+    }
+
+    fun selectImages(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                val localUris = withContext(Dispatchers.IO) {
+                    uris.mapIndexed { idx, uri ->
+                        var name = "image_$idx.jpg"
+                        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                if (nameIndex != -1) name = cursor.getString(nameIndex) ?: name
+                            }
+                        }
+                        val localFile = copyToAppStorage(uri, name)
+                        Uri.fromFile(localFile)
+                    }
+                }
+                val totalSize = localUris.sumOf { Uri.parse(it.toString()).path?.let { p -> File(p).length() } ?: 0L }
+                val displayName = if (localUris.size == 1) {
+                    localUris.first().lastPathSegment ?: "image.jpg"
+                } else {
+                    "${localUris.size} images selected"
+                }
+                val info = SelectedPdfInfo(
+                    uri = localUris.first(),
+                    name = displayName,
+                    sizeBytes = totalSize,
+                    pageCount = localUris.size,
+                    isImage = true,
+                    imageUris = localUris
+                )
+                _uiState.value = _uiState.value.copy(
+                    selectedPdf = info,
+                    selectedPageIndices = (0 until info.pageCount).toSet(),
+                    status = ConvertStatus.Idle,
+                    effectiveEngineSummary = computeSummary(
+                        mode = _uiState.value.selectedMode,
+                        provider = _uiState.value.configuredProviderName,
+                        model = _uiState.value.configuredModelName,
+                        pdfInfo = info,
+                        selectedPages = (0 until info.pageCount).toSet()
+                    )
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    status = ConvertStatus.Error("Failed to load images: ${e.localizedMessage ?: "Unknown error"}")
                 )
             }
         }
@@ -185,12 +309,16 @@ class ConvertViewModel(
                 val entity = com.markdrop.app.data.db.ConversionEntity(
                     fileName = pdf.name,
                     pdfUri = pdf.uri.toString(),
+                    inputUris = if (pdf.isImage && pdf.imageUris.isNotEmpty()) {
+                        pdf.imageUris.joinToString("\n") { it.toString() }
+                    } else null,
                     mode = mode,
                     status = com.markdrop.app.data.db.ConversionStatus.PENDING,
                     pageCount = totalToProcess,
                     pagesCompleted = 0,
                     progress = 0f,
-                    fileSizeBytes = pdf.sizeBytes
+                    fileSizeBytes = pdf.sizeBytes,
+                    selectedPages = com.markdrop.app.conversion.pdf.PageSelectionParser.serialize(pagesToProcess)
                 )
                 val jobId = app.conversionRepository.insert(entity)
 
