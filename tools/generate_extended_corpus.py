@@ -602,7 +602,7 @@ def make_question_bank_5pages():
     doc_sections = []
     for p_idx, (title, lines) in enumerate(topics):
         body = "\n".join(lines)
-        doc_sections.append(f"<!-- page: {p_idx + 1} -->\n\n## {title}\n\n{body}")
+        doc_sections.append(f"<!-- page: {p_idx + 1} -->\n\n# {title}\n\n{body}")
     doc_golden = "\n\n".join(doc_sections)
     write_golden(os.path.join(golden_dir, "question_bank_pages.doc.md"), doc_golden)
 

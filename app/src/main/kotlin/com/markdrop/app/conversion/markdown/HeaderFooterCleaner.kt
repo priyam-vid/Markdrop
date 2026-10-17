@@ -7,12 +7,14 @@ object HeaderFooterCleaner {
     private val PAGE_NUMBER_REGEX = Regex("""(?i)^\s*(?:page\s*)?\d+(?:\s*(?:of|/)\s*\d+)?\s*$""")
     private val DECORATED_PAGE_NUM_REGEX = Regex("""^\s*(?:[-—–]|\[)\s*\d+\s*(?:[-—–]|\])\s*$""")
     private val BARE_NUMBER_REGEX = Regex("""^\s*\d+\s*$""")
+    private val HEADING_PROTECT_REGEX = Regex("""^(?:#{1,6}\s+|(?i)(?:question|chapter|section|part|problem|exercise)\s+\d+)""")
 
     /**
      * Cleans recurring headers, footers, and positional page numbers across pages.
      *
      * Principles:
      * - Candidates for removal are strictly the first 2 and last 2 non-empty lines on pages with >= 10 lines.
+     * - Headings and structural titles are never candidates for removal.
      * - Short pages (< 10 lines) are never stripped.
      * - Recurring lines are removed only if appearing in candidate bands on >= max(3, 40%) of pages.
      * - Never strip on 1- or 2-page documents via the recurring rule.
@@ -35,8 +37,13 @@ object HeaderFooterCleaner {
             if (nonEmpty.size < 10) {
                 PageInfo(lines, nonEmpty, emptySet(), emptySet())
             } else {
-                val topCandidates = nonEmpty.take(2).toSet()
-                val bottomCandidates = nonEmpty.takeLast(2).toSet()
+                val eligibleIndices = nonEmpty.filter { idx ->
+                    val line = lines[idx].trim()
+                    !line.startsWith("<!--") &&
+                    !HEADING_PROTECT_REGEX.containsMatchIn(line)
+                }
+                val topCandidates = eligibleIndices.take(2).toSet()
+                val bottomCandidates = eligibleIndices.takeLast(2).toSet()
                 PageInfo(lines, nonEmpty, topCandidates, bottomCandidates)
             }
         }
@@ -77,7 +84,7 @@ object HeaderFooterCleaner {
             val filteredLines = mutableListOf<String>()
             page.originalLines.forEachIndexed { index, line ->
                 val trimmed = line.trim()
-                if (trimmed.startsWith("<!--")) {
+                if (trimmed.startsWith("<!--") || HEADING_PROTECT_REGEX.containsMatchIn(trimmed)) {
                     filteredLines.add(line)
                     return@forEachIndexed
                 }

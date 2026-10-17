@@ -11,37 +11,73 @@ object Assembler {
     private val TABLE_ROW_REGEX = Regex("""^\|.*\|$""")
     private val TABLE_SEPARATOR_REGEX = Regex("""^\|\s*(?::?-+:?\s*\|)+\s*$""")
 
-    fun assemble(pages: List<String>): String {
-        val nonBlankPages = pages.filter { it.isNotBlank() }
-        if (nonBlankPages.isEmpty()) return ""
-        if (nonBlankPages.size == 1) {
-            return normalizeHeadings(nonBlankPages[0])
+    fun assemble(
+        pages: List<String>,
+        pageNumbers: List<Int>? = null
+    ): String {
+        if (pages.isEmpty() || pages.all { it.isBlank() }) return ""
+
+        val effectiveNumbers = pageNumbers ?: (1..pages.size).toList()
+
+        // Single page without explicit pageNumbers preserves plain page text
+        if (pages.size == 1 && pageNumbers == null) {
+            return normalizeHeadings(pages[0].trim())
+        }
+
+        val blocks = mutableListOf<String>()
+        for (i in pages.indices) {
+            val pageNum = effectiveNumbers.getOrElse(i) { i + 1 }
+            val rawPage = pages[i].trim()
+            val marker = "<!-- page: $pageNum -->"
+
+            if (rawPage.isBlank() || rawPage == "<!-- blank page -->") {
+                blocks.add("$marker\n<!-- blank page -->")
+                continue
+            }
+
+            val pageText = if (rawPage.startsWith("<!-- page:")) {
+                rawPage
+            } else if (pageNumbers != null || i > 0) {
+                "$marker\n\n$rawPage"
+            } else {
+                rawPage
+            }
+
+            blocks.add(pageText)
         }
 
         val merged = mutableListOf<String>()
-        merged.add(nonBlankPages[0].trim())
+        for (i in blocks.indices) {
+            if (merged.isEmpty()) {
+                merged.add(blocks[i])
+                continue
+            }
 
-        for (i in 1 until nonBlankPages.size) {
-            val prevPage = merged.last()
-            val currPage = nonBlankPages[i].trim()
-            val pageNum = i + 1
+            val prevBlock = merged.last()
+            val currBlock = blocks[i]
+
+            // If current block is blank page, keep it separate
+            if (currBlock.contains("<!-- blank page -->")) {
+                merged.add(currBlock)
+                continue
+            }
 
             // 1. Check for split table across page boundary
-            val tableMergeResult = tryMergeSplitTable(prevPage, currPage)
+            val tableMergeResult = tryMergeSplitTable(prevBlock, currBlock)
             if (tableMergeResult != null) {
                 merged[merged.lastIndex] = tableMergeResult
                 continue
             }
 
             // 2. Check for split paragraph across page boundary
-            val paragraphMergeResult = tryMergeSplitParagraph(prevPage, currPage, pageNum)
+            val paragraphMergeResult = tryMergeSplitParagraph(prevBlock, currBlock)
             if (paragraphMergeResult != null) {
                 merged[merged.lastIndex] = paragraphMergeResult
                 continue
             }
 
-            // Standard page separation: emit page comment marker
-            merged.add("<!-- page: $pageNum -->\n\n$currPage")
+            // Standard page separation
+            merged.add(currBlock)
         }
 
         val joined = merged.joinToString("\n\n")
@@ -49,66 +85,105 @@ object Assembler {
     }
 
     /**
-     * Checks if prevPage ends with a table and currPage starts with a table of identical columns.
-     * Merges them by removing the duplicated header/separator row from currPage.
+     * Checks if prevBlock ends with a table and currBlock starts with a continuation of the same table.
+     * Merges them only if column counts and headers match.
      */
-    private fun tryMergeSplitTable(prevPage: String, currPage: String): String? {
-        val prevLines = prevPage.lines().dropLastWhile { it.isBlank() }
-        val currLines = currPage.lines().dropWhile { it.isBlank() }
+    private fun tryMergeSplitTable(prevBlock: String, currBlock: String): String? {
+        val prevLines = prevBlock.lines().dropLastWhile { it.isBlank() }
+        val currLines = currBlock.lines().dropWhile { it.isBlank() }
 
         if (prevLines.isEmpty() || currLines.isEmpty()) return null
 
         val lastPrevLine = prevLines.last().trim()
-        val firstCurrLine = currLines.first().trim()
+        if (!TABLE_ROW_REGEX.matches(lastPrevLine)) return null
 
-        if (!TABLE_ROW_REGEX.matches(lastPrevLine) || !TABLE_ROW_REGEX.matches(firstCurrLine)) {
-            return null
+        // Locate first content line in currBlock past the page marker comment
+        var currIdx = 0
+        if (currLines[currIdx].trim().startsWith("<!-- page:")) {
+            currIdx++
+            while (currIdx < currLines.size && currLines[currIdx].isBlank()) {
+                currIdx++
+            }
+        }
+        if (currIdx >= currLines.size) return null
+        val firstContentLine = currLines[currIdx].trim()
+        if (!TABLE_ROW_REGEX.matches(firstContentLine)) return null
+
+        // Find table separator in prevLines to locate header
+        var prevSepIdx = -1
+        for (i in prevLines.indices.reversed()) {
+            val l = prevLines[i].trim()
+            if (!TABLE_ROW_REGEX.matches(l)) break
+            if (TABLE_SEPARATOR_REGEX.matches(l)) {
+                prevSepIdx = i
+                break
+            }
+        }
+        if (prevSepIdx <= 0) return null
+        val prevHeader = prevLines[prevSepIdx - 1].trim()
+        val prevCols = prevHeader.split("|").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+
+        // Check if currBlock repeats header + separator
+        val hasRepeatedHeader = currIdx + 1 < currLines.size &&
+                TABLE_SEPARATOR_REGEX.matches(currLines[currIdx + 1].trim())
+
+        if (hasRepeatedHeader) {
+            val currHeader = firstContentLine
+            val currCols = currHeader.split("|").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+            if (prevCols != currCols) return null // Different headers -> different tables!
+            currIdx += 2 // Skip repeated header and separator
+        } else {
+            val currCols = firstContentLine.split("|").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+            if (currCols.size != prevCols.size || prevCols.size < 2) return null
         }
 
-        val prevColCount = lastPrevLine.split("|").filter { it.isNotBlank() }.size
-        val currColCount = firstCurrLine.split("|").filter { it.isNotBlank() }.size
-
-        if (prevColCount != currColCount || prevColCount < 2) return null
-
-        // Check if currPage starts with a duplicate table header + separator
-        var rowsToSkip = 0
-        if (currLines.size >= 2 && TABLE_SEPARATOR_REGEX.matches(currLines[1].trim())) {
-            rowsToSkip = 2 // Skip header and separator
+        while (currIdx < currLines.size && currLines[currIdx].isBlank()) {
+            currIdx++
         }
-
-        val remainingCurrLines = currLines.drop(rowsToSkip)
-        val combinedLines = prevLines + remainingCurrLines
-        return combinedLines.joinToString("\n")
+        val remainingCurr = currLines.drop(currIdx)
+        return (prevLines + remainingCurr).joinToString("\n")
     }
 
     /**
-     * Checks if prevPage ends with a paragraph that continues on currPage.
+     * Checks if prevBlock ends with a paragraph that continues on currBlock.
      */
-    private fun tryMergeSplitParagraph(prevPage: String, currPage: String, pageNum: Int): String? {
-        val prevLines = prevPage.lines().dropLastWhile { it.isBlank() }
-        val currLines = currPage.lines().dropWhile { it.isBlank() }
+    private fun tryMergeSplitParagraph(prevBlock: String, currBlock: String): String? {
+        val prevLines = prevBlock.lines().dropLastWhile { it.isBlank() }
+        val currLines = currBlock.lines().dropWhile { it.isBlank() }
 
         if (prevLines.isEmpty() || currLines.isEmpty()) return null
 
         val lastPrevLine = prevLines.last().trim()
-        val firstCurrLine = currLines.first().trim()
 
-        // If previous ends with heading, table, list, or code fence, do not merge
+        var currIdx = 0
+        var pageNum: Int? = null
+        if (currLines[currIdx].trim().startsWith("<!-- page:")) {
+            val m = Regex("""<!--\s*page:\s*(\d+)\s*-->""").find(currLines[currIdx])
+            pageNum = m?.groupValues?.get(1)?.toIntOrNull()
+            currIdx++
+            while (currIdx < currLines.size && currLines[currIdx].isBlank()) {
+                currIdx++
+            }
+        }
+        if (currIdx >= currLines.size) return null
+        val firstCurrLine = currLines[currIdx].trim()
+
         if (HEADING_REGEX.matches(lastPrevLine) ||
             TABLE_ROW_REGEX.matches(lastPrevLine) ||
             lastPrevLine.startsWith("- ") ||
             lastPrevLine.startsWith("* ") ||
-            lastPrevLine.startsWith("```")
+            lastPrevLine.startsWith("```") ||
+            lastPrevLine.startsWith(">")
         ) {
             return null
         }
 
-        // If current starts with heading, table, list, or code fence, do not merge
         if (HEADING_REGEX.matches(firstCurrLine) ||
             TABLE_ROW_REGEX.matches(firstCurrLine) ||
             firstCurrLine.startsWith("- ") ||
             firstCurrLine.startsWith("* ") ||
-            firstCurrLine.startsWith("```")
+            firstCurrLine.startsWith("```") ||
+            firstCurrLine.startsWith(">")
         ) {
             return null
         }
@@ -116,19 +191,18 @@ object Assembler {
         val lastChar = lastPrevLine.lastOrNull() ?: return null
         val firstChar = firstCurrLine.firstOrNull() ?: return null
 
-        // Split paragraph signal: previous line does NOT end with sentence-terminal punctuation
-        // AND next line starts with lowercase letter or continued words
         val isSentenceTerminal = SENTENCE_END_PUNCTUATION.contains(lastChar)
-        val isContinuation = firstChar.isLowerCase() || !isSentenceTerminal
+        val isContinuation = firstChar.isLowerCase()
 
         if (!isSentenceTerminal && isContinuation) {
             val prefix = prevLines.dropLast(1)
+            val marker = if (pageNum != null) " <!-- page: $pageNum --> " else " "
             val mergedLastLine = if (lastPrevLine.endsWith("-") && firstChar.isLowerCase()) {
                 lastPrevLine.dropLast(1) + firstCurrLine
             } else {
-                "$lastPrevLine <!-- page: $pageNum --> $firstCurrLine"
+                "$lastPrevLine$marker$firstCurrLine"
             }
-            val remainingCurr = currLines.drop(1)
+            val remainingCurr = currLines.drop(currIdx + 1)
             return (prefix + listOf(mergedLastLine) + remainingCurr).joinToString("\n")
         }
 
@@ -137,7 +211,7 @@ object Assembler {
 
     /**
      * Normalizes heading levels:
-     * - If document has no H1 (#) but starts at H2 or H3, shifts all headings up.
+     * - If document has no H1 (#) but starts at H2 or H3, shifts all headings up (unless question headings).
      * - Prevents large skips (e.g. H1 followed immediately by H3 is normalized to H2).
      */
     fun normalizeHeadings(markdown: String): String {

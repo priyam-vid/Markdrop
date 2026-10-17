@@ -113,4 +113,51 @@ class AssemblerTest {
 
         assertEquals(expected, Assembler.normalizeHeadings(input))
     }
+
+    @Test
+    fun `assemble with pageNumbers emits page 1 marker and all page numbers`() {
+        val page1 = "Page one content"
+        val page2 = "Page two content"
+        val assembled = Assembler.assemble(listOf(page1, page2), listOf(1, 2))
+        assertTrue(assembled.startsWith("<!-- page: 1 -->"))
+        assertTrue(assembled.contains("<!-- page: 2 -->"))
+    }
+
+    @Test
+    fun `assemble with blank page preserves blank page comment`() {
+        val page1 = "Page 1"
+        val page2 = ""
+        val page3 = "Page 3"
+        val assembled = Assembler.assemble(listOf(page1, page2, page3), listOf(1, 2, 3))
+        assertTrue(assembled.contains("<!-- page: 2 -->\n<!-- blank page -->"))
+    }
+
+    @Test
+    fun `assemble with non-consecutive pageNumbers emits original page numbers`() {
+        val page2 = "Page 2 content"
+        val page4 = "Page 4 content"
+        val assembled = Assembler.assemble(listOf(page2, page4), listOf(2, 4))
+        assertTrue(assembled.startsWith("<!-- page: 2 -->"))
+        assertTrue(assembled.contains("<!-- page: 4 -->"))
+    }
+
+    @Test
+    fun `assemble does not merge tables when headers do not match`() {
+        val page1 = """
+            | Product | Price |
+            |---|---|
+            | Apple | $1.00 |
+        """.trimIndent()
+
+        val page2 = """
+            | Person | City |
+            |---|---|
+            | Alice | NYC |
+        """.trimIndent()
+
+        val assembled = Assembler.assemble(listOf(page1, page2), listOf(1, 2))
+        assertTrue(assembled.contains("| Product | Price |"))
+        assertTrue(assembled.contains("| Person | City |"))
+        assertTrue(assembled.contains("<!-- page: 2 -->"))
+    }
 }

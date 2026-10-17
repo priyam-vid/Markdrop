@@ -1,6 +1,6 @@
 <!-- page: 1 -->
 
-## Question 1: Differential Equations
+# Question 1: Differential Equations
 
 Consider a second-order linear ordinary differential equation with constant coefficients.
 Let y'' + 4y' + 5y = 0 subject to initial conditions y(0) = 1 and y'(0) = -2.
@@ -17,7 +17,7 @@ Part J: Justify why uniqueness holds according to the Picard-Lindelof existence 
 
 <!-- page: 2 -->
 
-## Question 2: Linear Algebra and Matrix Theory
+# Question 2: Linear Algebra and Matrix Theory
 
 Let A be a real symmetric matrix of order 4 with known trace and determinant.
 Part A: Prove that all eigenvalues of matrix A are strictly real numbers.
@@ -34,7 +34,7 @@ Part K: Derive the condition number kappa(A) under the Euclidean matrix 2-norm.
 
 <!-- page: 3 -->
 
-## Question 3: Multivariable Calculus and Field Theory
+# Question 3: Multivariable Calculus and Field Theory
 
 Let F(x, y, z) = (2xy + z^2) i + (x^2 + 2yz) j + (y^2 + 2xz) k be a three-dimensional vector field.
 Part A: Compute the curl of vector field F and determine if F is irrotational everywhere.
@@ -51,7 +51,7 @@ Part K: Determine the differential geometric curvature of the resulting streamli
 
 <!-- page: 4 -->
 
-## Question 4: Quantum Mechanics and Wave Equations
+# Question 4: Quantum Mechanics and Wave Equations
 
 Consider a quantum particle of mass m confined within an infinite one-dimensional square well potential.
 Let the potential V(x) = 0 for 0 < x < L and V(x) = infinity elsewhere.
@@ -69,7 +69,7 @@ Part K: Analyze the tunneling transmission coefficient through a finite rectangu
 
 <!-- page: 5 -->
 
-## Question 5: Electrodynamics and Wave Propagation
+# Question 5: Electrodynamics and Wave Propagation
 
 Consider Maxwell's equations in linear isotropic homogeneous non-conducting dielectric media.
 Part A: State the four microscopic Maxwell equations in differential vector form.

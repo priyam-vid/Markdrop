@@ -40,11 +40,7 @@ class OfflineDocumentConverter(
         }
 
         // 3. Cross-page assembly
-        val assembledMarkdown = if (pages.size == 1) {
-            cleanedPages[0]
-        } else {
-            Assembler.assemble(cleanedPages)
-        }
+        val assembledMarkdown = Assembler.assemble(cleanedPages, pages.map { it.pageNumber })
 
         return OfflineResult(
             markdown = assembledMarkdown,

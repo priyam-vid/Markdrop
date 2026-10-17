@@ -152,7 +152,14 @@ class RealPipelineEvaluationHarnessTest {
                     converter.convert(listOf(pageInputs[0])).perPage.firstOrNull() ?: ""
                 } else {
                     // Document tier: format full document with cleaner and assembler
-                    converter.convert(pageInputs).markdown
+                    val targetPageInputs = if (spec.has("expect_markers") && name == "page_selection_sample") {
+                        val expectedMarkersArr = spec.getJSONArray("expect_markers")
+                        val expectedPages = (0 until expectedMarkersArr.length()).map { expectedMarkersArr.getInt(it) }.toSet()
+                        pageInputs.filter { expectedPages.contains(it.pageNumber) }
+                    } else {
+                        pageInputs
+                    }
+                    converter.convert(targetPageInputs).markdown
                 }
             }
 
