@@ -1,0 +1,304 @@
+{
+  "expectedFailures": {
+    "digital_article_2col": "F1: banner over two columns causes reading order failure with 22.2pt gap",
+    "banner_gap_8pt": "F1: banner over two columns causes reading order failure with 8pt gap",
+    "banner_gap_12pt": "F1: banner over two columns causes reading order failure with 12pt gap",
+    "banner_gap_18pt": "F1: banner over two columns causes reading order failure with 18pt gap",
+    "banner_gap_22pt": "F1: banner over two columns causes reading order failure with 22pt gap",
+    "banner_gap_30pt": "F1: banner over two columns causes reading order failure with 30pt gap",
+    "banner_gap_40pt": "F1: banner over two columns causes reading order failure with 40pt gap",
+    "banner_abstract_1line": "F1: banner over two columns causes reading order failure with 1-line abstract",
+    "banner_abstract_6line": "F1: banner over two columns causes reading order failure with 6-line abstract",
+    "banner_with_footnote": "F1: banner over two columns causes reading order failure with footnote",
+    "banner_with_sidebar": "F1: banner over two columns causes reading order failure with sidebar",
+    "three_column_banner": "F1: three-column layout under banner causes reading order failure",
+    "address_block_two_row": "F14: two-row address block erroneously parsed as table",
+    "signature_line": "F14: two-row signature line erroneously parsed as table",
+    "toc_dot_leaders": "F14: table of contents dot leaders ordering / format",
+    "question_bank_pages": "F9: 5-page document headings stripped by line-index cleaner",
+    "digital_multipage_table": "F10: assembler does not emit page 1 marker",
+    "digital_with_raster_figure": "F11: raster figure box placed at hardcoded coordinates",
+    "blank_middle_page": "F10: assembler does not emit blank page comments or page 1 marker",
+    "page_selection_sample": "F10: assembler does not preserve original page numbers for selected pages",
+    "digital_nospace_kerning": "F15: word segmentation on kerned and negative-spaced text",
+    "digital_two_column_real": "F1: sentence-level reading order across two columns",
+    "digital_math": "F15: reading order and alignment on sub/superscript math formulas",
+    "digital_with_figures": "F3: vector figure text ordering and placement",
+    "mixed_slides": "F3: slide box layout ordering across multi-column slide items",
+    "typed_notes_sample": "F1: margin note box layout reading order"
+  },
+  "documents": {
+    "digital_nospace_kerning": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "digital_two_column_real": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": null,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "digital_article_2col": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "banner_gap_8pt": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "banner_gap_12pt": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "banner_gap_18pt": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "banner_gap_22pt": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "banner_gap_30pt": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "banner_gap_40pt": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "banner_abstract_1line": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "banner_abstract_6line": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "banner_with_footnote": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "banner_with_sidebar": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "three_column_banner": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "digital_table_heavy": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": null,
+      "min_table_f1": 0.95,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "digital_table_multiword": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": 0.95,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "digital_right_aligned_numbers_table": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": 0.95,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "address_block_two_row": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "signature_line": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "toc_dot_leaders": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "digital_math": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "digital_with_figures": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": null,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "digital_with_raster_figure": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": null,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "mixed_slides": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": null,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "typed_printed_sample": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "typed_notes_sample": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "rotated_page": {
+      "tier": "page",
+      "max_wer": 0.05,
+      "min_heading_f1": null,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0
+    },
+    "question_bank_pages": {
+      "tier": "document",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0,
+      "must_keep_headings": [
+        "Question 1: Differential Equations",
+        "Question 2: Linear Algebra and Matrix Theory",
+        "Question 3: Multivariable Calculus and Field Theory",
+        "Question 4: Quantum Mechanics and Wave Equations",
+        "Question 5: Electrodynamics and Wave Propagation"
+      ],
+      "must_not_contain": [
+        "Confidential · Examination Board Assessment Materials"
+      ]
+    },
+    "digital_multipage_table": {
+      "tier": "document",
+      "max_wer": 0.05,
+      "min_table_f1": 0.95,
+      "min_order_score": 0.95,
+      "max_glued": 0,
+      "expect_markers": [1, 2, 3]
+    },
+    "blank_middle_page": {
+      "tier": "document",
+      "max_wer": 0.05,
+      "min_heading_f1": null,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0,
+      "expect_markers": [1, 2, 3]
+    },
+    "page_selection_sample": {
+      "tier": "document",
+      "max_wer": 0.05,
+      "min_heading_f1": 0.9,
+      "min_table_f1": null,
+      "min_order_score": 0.95,
+      "max_glued": 0,
+      "expect_markers": [2, 4]
+    },
+    "scan_image_only": {
+      "tier": "page",
+      "not_run": "needs on-device ML Kit / vision runtime"
+    },
+    "scan_image_with_stamp": {
+      "tier": "page",
+      "not_run": "needs on-device ML Kit / vision runtime"
+    },
+    "scan_raster_multipage": {
+      "tier": "document",
+      "not_run": "needs on-device ML Kit / vision runtime"
+    }
+  }
+}

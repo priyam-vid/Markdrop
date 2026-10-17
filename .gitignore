@@ -78,3 +78,8 @@ venv/
 
 # Diagnostic runtime traces (local only)
 diagnostics/
+
+# Local overview bundles
+overview/
+overview.zip
+

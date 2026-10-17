@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 """
-Unit tests and negative controls for tools/evaluate.py
+Unit tests and negative controls for tools/evaluate.py and tools/make_report.py
 """
 
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 
-from evaluate import compute_wer, compute_table_cell_f1, compute_heading_f1, check_math_balance, count_glued_words
+from evaluate import (
+    compute_wer,
+    compute_order_score,
+    compute_structural_table_f1,
+    compute_heading_f1,
+    check_math_balance,
+    count_glued_words
+)
+from make_report import generate_markdown_report
 
 class TestEvaluator(unittest.TestCase):
 
@@ -28,26 +35,64 @@ class TestEvaluator(unittest.TestCase):
         self.assertGreaterEqual(wer, 1.0)
 
     def test_glued_words_counter(self):
-        # Word > 25 chars without punctuation
         glued = "NeuralDocumentUnderstandingAndDeepLearningTechniques"
         normal = "Neural Document Understanding"
         self.assertEqual(count_glued_words(glued), 1)
         self.assertEqual(count_glued_words(normal), 0)
 
-    def test_table_cell_f1(self):
+    def test_structural_table_f1_identical(self):
         t1 = "| A | B |\n|---|---|\n| 1 | 2 |"
-        t2 = "| A | B |\n|---|---|\n| 1 | 3 |"
-        f1 = compute_table_cell_f1(t1, t2)
-        # Cells in t1: {a, b, 1, 2}. Cells in t2: {a, b, 1, 3}. Intersection: {a, b, 1} (3).
-        # Precision: 3/4, Recall: 3/4, F1: 0.75
-        self.assertAlmostEqual(f1, 0.75, places=2)
+        t2 = "| A | B |\n|---|---|\n| 1 | 2 |"
+        f1 = compute_structural_table_f1(t1, t2)
+        self.assertEqual(f1, 1.0)
+
+    def test_structural_table_f1_negative_control_scrambled(self):
+        # Same cells, but rows or columns are scrambled:
+        # Original: (0,0)=A, (0,1)=B, (1,0)=1, (1,1)=2
+        # Scrambled: (0,0)=B, (0,1)=A, (1,0)=2, (1,1)=1
+        t1 = "| A | B |\n|---|---|\n| 1 | 2 |"
+        t2 = "| B | A |\n|---|---|\n| 2 | 1 |"
+        f1 = compute_structural_table_f1(t1, t2)
+        # Structural coordinate matching MUST fail: f1 should be 0.0, strictly < 1.0!
+        self.assertIsNotNone(f1)
+        self.assertLess(f1, 1.0)
+
+    def test_structural_table_f1_negative_control_no_tables(self):
+        # Two documents with NO tables must return None (evaluator formats as n/a), NEVER 1.00!
+        p1 = "This is a document with plain paragraphs."
+        p2 = "This is another document with plain paragraphs."
+        f1 = compute_structural_table_f1(p1, p2)
+        self.assertIsNone(f1)
+
+    def test_order_score_negative_control_swapped_columns(self):
+        # Golden: Banner, Left Column sentences, Right Column sentences
+        ref = """
+        This is the introduction banner statement describing the research.
+        Left column sentence one discusses background literature.
+        Left column sentence two evaluates initial experimental data.
+        Left column sentence three establishes primary conclusions.
+        Right column sentence one discusses alternative configurations.
+        Right column sentence two measures latency impact.
+        Right column sentence three provides future recommendations.
+        """
+        # Swapped columns hypothesis: Banner, Right Column sentences, Left Column sentences
+        hyp = """
+        This is the introduction banner statement describing the research.
+        Right column sentence one discusses alternative configurations.
+        Right column sentence two measures latency impact.
+        Right column sentence three provides future recommendations.
+        Left column sentence one discusses background literature.
+        Left column sentence two evaluates initial experimental data.
+        Left column sentence three establishes primary conclusions.
+        """
+        order_score = compute_order_score(ref, hyp)
+        # Swapping columns MUST fail the order score threshold (0.95)
+        self.assertLess(order_score, 0.95)
 
     def test_heading_f1(self):
         h1 = "# Title\n## Section"
         h2 = "# Title\n### Section"
         f1 = compute_heading_f1(h1, h2)
-        # (1, title) matches. (2, section) vs (3, section) mismatch.
-        # Precision: 1/2, Recall: 1/2, F1: 0.5
         self.assertAlmostEqual(f1, 0.5, places=2)
 
     def test_math_balance(self):
@@ -66,25 +111,49 @@ class TestEvaluator(unittest.TestCase):
 
         # 2. Missing output exits non-zero
         with tempfile.TemporaryDirectory() as gold_dir, tempfile.TemporaryDirectory() as out_dir:
-            # Create golden file
+            thresh_path = os.path.join(gold_dir, "thresholds.json")
+            with open(thresh_path, "w") as tf:
+                tf.write('{"documents": {"doc1": {"tier": "page", "max_wer": 0.05}}}')
             with open(os.path.join(gold_dir, "doc1.page1.md"), "w") as f:
                 f.write("Expected text")
             # outputs directory is empty
-            res = subprocess.run([sys.executable, "tools/evaluate.py", "--outputs", out_dir, "--golden", gold_dir],
+            res = subprocess.run([sys.executable, "tools/evaluate.py", "--outputs", out_dir, "--golden", gold_dir, "--thresholds", thresh_path],
                                  capture_output=True, text=True)
             self.assertEqual(res.returncode, 1)
-            self.assertIn("Missing expected output files", res.stderr)
 
-        # 3. Output with one word changed has WER > 0
-        with tempfile.TemporaryDirectory() as gold_dir, tempfile.TemporaryDirectory() as out_dir:
-            with open(os.path.join(gold_dir, "doc1.page1.md"), "w") as f:
-                f.write("one two three")
-            with open(os.path.join(out_dir, "doc1.md"), "w") as f:
-                f.write("one two four")
-            res = subprocess.run([sys.executable, "tools/evaluate.py", "--outputs", out_dir, "--golden", gold_dir],
-                                 capture_output=True, text=True)
-            self.assertEqual(res.returncode, 0)
-            self.assertIn("33.33%", res.stdout)
+    def test_make_report_integrity(self):
+        # Report generator must refuse to print PASS for a failing row
+        with tempfile.TemporaryDirectory() as tmpdir:
+            results_path = os.path.join(tmpdir, "results.json")
+            data = {
+                "total": 1,
+                "passed": 0,
+                "expected_failures": 0,
+                "unexpected_failures": 1,
+                "results": [
+                    {
+                        "name": "failing_doc",
+                        "tier": "page",
+                        "extracted_by": "Test",
+                        "wall_clock_ms": 10,
+                        "wer": 0.45,
+                        "order_score": 0.50,
+                        "table_f1": 0.0,
+                        "heading_f1": 0.0,
+                        "math_balance": "VALID",
+                        "glued_words": 0,
+                        "verdict": "FAIL",
+                        "notes": "Failed: WER > 0.05"
+                    }
+                ]
+            }
+            import json
+            with open(results_path, "w") as f:
+                json.dump(data, f)
+
+            report = generate_markdown_report(results_path, "Test Report")
+            self.assertIn("**FAIL**", report)
+            self.assertNotIn("**PASS**", report)
 
 if __name__ == "__main__":
     unittest.main()

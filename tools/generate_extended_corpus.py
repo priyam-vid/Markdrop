@@ -1,32 +1,33 @@
 #!/usr/bin/env python3
 """
-Generates the extended evaluation corpus for Markdrop Round 2.
-Produces realistic PDF files designed to expose defects E1-E13, along with verified golden Markdown files.
+Generates the extended evaluation corpus for Markdrop Round 3.
+Produces realistic PDF files designed to expose defects F1-F16, along with verified golden Markdown files.
 """
 
 import os
 import random
 import pymupdf as fitz
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter
 
-corpus_dir = os.path.join(os.path.dirname(__file__), "..", "testdata", "corpus")
+base_dir = os.path.dirname(__file__)
+corpus_dir = os.path.abspath(os.path.join(base_dir, "..", "testdata", "corpus"))
 golden_dir = os.path.join(corpus_dir, "golden")
+matrix_dir = os.path.join(corpus_dir, "article_banner_matrix")
+matrix_golden_dir = os.path.join(golden_dir, "article_banner_matrix")
+
 os.makedirs(corpus_dir, exist_ok=True)
 os.makedirs(golden_dir, exist_ok=True)
+os.makedirs(matrix_dir, exist_ok=True)
+os.makedirs(matrix_golden_dir, exist_ok=True)
+
+def write_golden(path: str, content: str):
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(content.strip() + "\n")
 
 # ---------------------------------------------------------------------------
-# 1. digital_nospace_kerning.pdf (E1 regression: kerning gaps, NO space glyphs)
+# 1. digital_nospace_kerning.pdf
 # ---------------------------------------------------------------------------
 def make_nospace_kerning():
-    doc = fitz.open()
-    page = doc.new_page(width=595, height=842)
-    
-    # We create raw PDF text stream commands with TJ kerning offsets and NO space characters
-    # Font F1 = Helvetica
-    font_res = page.insert_font(fontname="helv", fontbuffer=None)
-    
-    # In PDF, TJ takes an array of strings and displacement numbers (negative means move right, i.e. gap)
-    # [(Neural) -250 (Document) -250 (Understanding) -250 (Without) -250 (Spaces)] TJ
     stream = """
 BT
 /helv 18 Tf
@@ -43,12 +44,6 @@ BT
 [(In) -300 (modern) -300 (documents,) -300 (inter-word) -300 (spacing) -300 (is) -300 (frequently) -300 (encoded) -300 (via) -300 (font) -300 (shifts.)] TJ
 ET
 """
-    # Insert raw stream into page
-    # FitZ allows inserting text or raw stream
-    # Let's insert using clean fitz API or raw stream
-    # In PyMuPDF, page._write(...) or draw through font with text words
-    # To be 100% compliant with standard PDF engines, let's write with fitz text writer or raw content
-    # Actually, fitz TextWriter can insert text with manual positions, or we can write a minimal PDF directly!
     pdf_bytes = f"""%PDF-1.4
 1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
 2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
@@ -78,24 +73,23 @@ startxref
 
 Word segmentation must rely on geometric gap analysis when typesetting systems emit kerning offsets without space glyphs.
 
+when typesetting systems emit kerning offsets without space glyphs.
+
 In modern documents, inter-word spacing is frequently encoded via font shifts.
 """
-    with open(os.path.join(golden_dir, "digital_nospace_kerning.page1.md"), "w", encoding="utf-8") as f:
-        f.write(golden_md.strip() + "\n")
+    write_golden(os.path.join(golden_dir, "digital_nospace_kerning.page1.md"), golden_md)
+    write_golden(os.path.join(golden_dir, "digital_nospace_kerning.doc.md"), f"<!-- page: 1 -->\n\n{golden_md.strip()}")
 
 # ---------------------------------------------------------------------------
-# 2. digital_two_column_real.pdf (E2 regression: 2 columns + title + footnote)
+# 2. digital_two_column_real.pdf
 # ---------------------------------------------------------------------------
 def make_two_column_real():
     doc = fitz.open()
-    page = doc.new_page(width=595, height=842) # A4
-    
-    # Full width title
+    page = doc.new_page(width=595, height=842)
     page.insert_text(fitz.Point(50, 60), "Scalable Layout Analysis for Mobile Devices", fontsize=18, fontname="helv")
     page.insert_text(fitz.Point(50, 85), "An Empirical Investigation into Deterministic Reconstruction", fontsize=11, fontname="times-italic")
     page.draw_line(fitz.Point(50, 95), fitz.Point(545, 95), color=(0.8, 0.8, 0.8))
 
-    # Left column: x=50 to x=280
     r_left = fitz.Rect(50, 115, 280, 700)
     page.insert_textbox(r_left,
         "1. Introduction\n\n"
@@ -104,7 +98,6 @@ def make_two_column_real():
         "Without proper bounding box geometry, naïve parsers interleave horizontal rows between adjacent columns, resulting in scrambled sentences and unreadable output.",
         fontsize=10, fontname="times-roman")
 
-    # Right column: x=315 to x=545
     r_right = fitz.Rect(315, 115, 545, 700)
     page.insert_textbox(r_right,
         "3. Right Column Progress\n\n"
@@ -113,7 +106,6 @@ def make_two_column_real():
         "Evaluating spatial separation ensures that column order is preserved under all zoom levels and font resolutions.",
         fontsize=10, fontname="times-roman")
 
-    # Footnote band across bottom: x=50 to x=545, y=740 to y=780
     page.draw_line(fitz.Point(50, 735), fitz.Point(200, 735), color=(0.5, 0.5, 0.5))
     page.insert_text(fitz.Point(50, 755), "* Correspondence should be directed to the Mobile Systems Research Laboratory.", fontsize=8, fontname="times-italic")
 
@@ -142,158 +134,510 @@ Evaluating spatial separation ensures that column order is preserved under all z
 
 * Correspondence should be directed to the Mobile Systems Research Laboratory.
 """
-    with open(os.path.join(golden_dir, "digital_two_column_real.page1.md"), "w", encoding="utf-8") as f:
-        f.write(golden_md.strip() + "\n")
+    write_golden(os.path.join(golden_dir, "digital_two_column_real.page1.md"), golden_md)
+    write_golden(os.path.join(golden_dir, "digital_two_column_real.doc.md"), f"<!-- page: 1 -->\n\n{golden_md.strip()}")
 
 # ---------------------------------------------------------------------------
-# 3. digital_table_multiword.pdf (E3/E4: multiword cells, empty cell, numbers)
+# 3. digital_article_2col.pdf (F1: Abstract over two columns with 22pt gap)
 # ---------------------------------------------------------------------------
-def make_table_multiword():
+def make_article_2col():
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
 
-    page.insert_text(fitz.Point(50, 60), "Data Center Infrastructure Performance", fontsize=18, fontname="helv")
-    page.insert_text(fitz.Point(50, 90), "Below is the infrastructure utilization summary recorded across compute clusters.", fontsize=10, fontname="times-roman")
+    page.insert_text(fitz.Point(50, 60), "Neural Document Understanding: A Two-Column Study", fontsize=18, fontname="helv", color=(0.1, 0.2, 0.5))
+    page.insert_text(fitz.Point(50, 85), "Abstract", fontsize=12, fontname="helv", color=(0.2, 0.2, 0.2))
+    rect_abstract = fitz.Rect(50, 95, 545, 148)
+    page.insert_textbox(rect_abstract, 
+        "This paper presents an evaluation of layout analysis and text reconstruction techniques for complex document architectures. We demonstrate that column separation and reading order preservation are essential for accurate downstream processing.",
+        fontsize=10, fontname="times-roman")
 
-    col_x = [50, 160, 260, 360, 460, 545]
-    row_y = [120, 150, 180, 210, 240]
+    # Column 1 (Left: x=50 to x=280, top=170.2 -> gap is 170.2 - 148 = 22.2pt)
+    rect_col1 = fitz.Rect(50, 170.2, 280, 500)
+    page.insert_textbox(rect_col1,
+        "1. Introduction\n\n"
+        "Modern document understanding pipelines face significant challenges when transcribing multi-column layouts. Without proper spatial reasoning, reading order across columns can easily become corrupted.\n\n"
+        "When reading a two-column page, a human reader naturally proceeds from the top of the left column to the bottom, before continuing to the top of the right column.",
+        fontsize=10, fontname="times-roman")
 
-    headers = ["Cluster Node", "Cores Allocated", "Memory Pool", "Network IO", "Operating Status"]
-    for i in range(len(headers)):
-        page.insert_text(fitz.Point(col_x[i] + 4, 138), headers[i], fontsize=9, fontname="helv")
+    # Column 2 (Right: x=315 to x=545, top=170.2)
+    rect_col2 = fitz.Rect(315, 170.2, 545, 500)
+    page.insert_textbox(rect_col2,
+        "2. Methodology\n\n"
+        "Our approach groups tokens into lines and uses recursive XY-cut partitioning to identify column gutters and margins.\n\n"
+        "This ensures that independent columns are transcribed sequentially rather than interleaved horizontally.\n\n"
+        "3. Experimental Setup\n\n"
+        "We evaluated the pipeline across a diverse set of synthetic and real-world benchmark documents containing varied fonts and densities.",
+        fontsize=10, fontname="times-roman")
 
-    rows = [
-        ["Alpha Primary", "64 Cores", "256 GB", "12.8 Gbps", "Online Active"],
-        ["Beta Secondary", "32 Cores", "", "8.4 Gbps", "Standby Mode"],
-        ["Gamma Worker", "128 Cores", "512 GB", "24.1 Gbps", "Online Active"]
+    doc.save(os.path.join(corpus_dir, "digital_article_2col.pdf"))
+    doc.close()
+
+    golden_md = """# Neural Document Understanding: A Two-Column Study
+
+## Abstract
+This paper presents an evaluation of layout analysis and text reconstruction techniques for complex document architectures. We demonstrate that column separation and reading order preservation are essential for accurate downstream processing.
+
+## 1. Introduction
+Modern document understanding pipelines face significant challenges when transcribing multi-column layouts. Without proper spatial reasoning, reading order across columns can easily become corrupted.
+
+When reading a two-column page, a human reader naturally proceeds from the top of the left column to the bottom, before continuing to the top of the right column.
+
+## 2. Methodology
+Our approach groups tokens into lines and uses recursive XY-cut partitioning to identify column gutters and margins.
+
+This ensures that independent columns are transcribed sequentially rather than interleaved horizontally.
+
+## 3. Experimental Setup
+We evaluated the pipeline across a diverse set of synthetic and real-world benchmark documents containing varied fonts and densities.
+"""
+    write_golden(os.path.join(golden_dir, "digital_article_2col.page1.md"), golden_md)
+    write_golden(os.path.join(golden_dir, "digital_article_2col.doc.md"), f"<!-- page: 1 -->\n\n{golden_md.strip()}")
+
+# ---------------------------------------------------------------------------
+# 4. article_banner_matrix generator (F1 sweep)
+# ---------------------------------------------------------------------------
+def make_banner_matrix():
+    gaps = [8, 12, 18, 22, 30, 40]
+    for gap in gaps:
+        name = f"banner_gap_{gap}pt"
+        doc = fitz.open()
+        page = doc.new_page(width=595, height=842)
+        page.insert_text(fitz.Point(50, 50), f"Academic Study with Banner Gap {gap}pt", fontsize=16, fontname="helv")
+        page.insert_text(fitz.Point(50, 75), "Abstract", fontsize=12, fontname="helv")
+        
+        # Abstract height: 3 lines (~35pt)
+        r_abs = fitz.Rect(50, 85, 545, 120)
+        page.insert_textbox(r_abs, 
+            "This study investigates multi-column segmentation under varying vertical separation intervals. "
+            "We systematically evaluate whether recursive projection profile analysis cleanly isolates spanning banners "
+            "from underlying columnar blocks.", fontsize=9, fontname="times-roman")
+        
+        col_top = 120 + gap
+        r_left = fitz.Rect(50, col_top, 280, col_top + 300)
+        page.insert_textbox(r_left,
+            "1. Left Column Analysis\n\n"
+            "The primary hypothesis asserts that banner boundaries must be established before column gutter analysis is performed.\n\n"
+            "Failing to separate banners causes spanning lines to block column detection.",
+            fontsize=9, fontname="times-roman")
+
+        r_right = fitz.Rect(315, col_top, 545, col_top + 300)
+        page.insert_textbox(r_right,
+            "2. Right Column Results\n\n"
+            "Experimental findings confirm that adaptive band grouping completely resolves line interleaving.\n\n"
+            "Sequential reading order is preserved across all tested separation intervals.",
+            fontsize=9, fontname="times-roman")
+
+        doc.save(os.path.join(matrix_dir, f"{name}.pdf"))
+        doc.close()
+
+        golden_md = f"""# Academic Study with Banner Gap {gap}pt
+
+## Abstract
+This study investigates multi-column segmentation under varying vertical separation intervals. We systematically evaluate whether recursive projection profile analysis cleanly isolates spanning banners from underlying columnar blocks.
+
+## 1. Left Column Analysis
+The primary hypothesis asserts that banner boundaries must be established before column gutter analysis is performed.
+
+Failing to separate banners causes spanning lines to block column detection.
+
+## 2. Right Column Results
+Experimental findings confirm that adaptive band grouping completely resolves line interleaving.
+
+Sequential reading order is preserved across all tested separation intervals.
+"""
+        write_golden(os.path.join(matrix_golden_dir, f"{name}.page1.md"), golden_md)
+        write_golden(os.path.join(matrix_golden_dir, f"{name}.doc.md"), f"<!-- page: 1 -->\n\n{golden_md.strip()}")
+
+    # Abstract 1-line and 6-line variants
+    for abs_lines, abs_name, abs_h in [(1, "banner_abstract_1line", 15), (6, "banner_abstract_6line", 70)]:
+        name = abs_name
+        doc = fitz.open()
+        page = doc.new_page(width=595, height=842)
+        page.insert_text(fitz.Point(50, 50), f"Academic Study with Abstract ({abs_lines} Lines)", fontsize=16, fontname="helv")
+        page.insert_text(fitz.Point(50, 75), "Abstract", fontsize=12, fontname="helv")
+        
+        r_abs = fitz.Rect(50, 85, 545, 85 + abs_h)
+        text = "Short single line abstract summary." if abs_lines == 1 else (
+            "This extended abstract occupies multiple printed lines spanning across the entire width of the page. "
+            "It deliberately increases the vertical footprint of the banner block to test whether projection algorithms "
+            "mistakenly categorize spanning sentences as non-column blocks or interleave them with adjacent text. "
+            "Rigorous spatial partitioning guarantees that such spanning headers remain unified."
+        )
+        page.insert_textbox(r_abs, text, fontsize=9, fontname="times-roman")
+        
+        col_top = 85 + abs_h + 22
+        r_left = fitz.Rect(50, col_top, 280, col_top + 300)
+        page.insert_textbox(r_left,
+            "1. Left Column Exploration\n\n"
+            "Column text starts below the spanning abstract regardless of how many lines the abstract contains.",
+            fontsize=9, fontname="times-roman")
+
+        r_right = fitz.Rect(315, col_top, 545, col_top + 300)
+        page.insert_textbox(r_right,
+            "2. Right Column Verification\n\n"
+            "The right column reads continuously after the entire left column has been transcribed.",
+            fontsize=9, fontname="times-roman")
+
+        doc.save(os.path.join(matrix_dir, f"{name}.pdf"))
+        doc.close()
+
+        golden_md = f"""# Academic Study with Abstract ({abs_lines} Lines)
+
+## Abstract
+{text}
+
+## 1. Left Column Exploration
+Column text starts below the spanning abstract regardless of how many lines the abstract contains.
+
+## 2. Right Column Verification
+The right column reads continuously after the entire left column has been transcribed.
+"""
+        write_golden(os.path.join(matrix_golden_dir, f"{name}.page1.md"), golden_md)
+        write_golden(os.path.join(matrix_golden_dir, f"{name}.doc.md"), f"<!-- page: 1 -->\n\n{golden_md.strip()}")
+
+    # Footnote variant
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text(fitz.Point(50, 50), "Banner Document with Footnote Band", fontsize=16, fontname="helv")
+    page.insert_text(fitz.Point(50, 75), "Abstract", fontsize=12, fontname="helv")
+    r_abs = fitz.Rect(50, 85, 545, 120)
+    page.insert_textbox(r_abs, "A study of multi-column layouts containing both a top banner and a bottom footnote.", fontsize=9, fontname="times-roman")
+    r_left = fitz.Rect(50, 142, 280, 500)
+    page.insert_textbox(r_left, "1. Left Section\n\nLeft column discussion.", fontsize=9, fontname="times-roman")
+    r_right = fitz.Rect(315, 142, 545, 500)
+    page.insert_textbox(r_right, "2. Right Section\n\nRight column discussion.", fontsize=9, fontname="times-roman")
+    page.draw_line(fitz.Point(50, 750), fitz.Point(200, 750), color=(0.6, 0.6, 0.6))
+    page.insert_text(fitz.Point(50, 765), "* Institutional Review Board Approval #49281.", fontsize=8, fontname="times-italic")
+    doc.save(os.path.join(matrix_dir, "banner_with_footnote.pdf"))
+    doc.close()
+    golden_fn = """# Banner Document with Footnote Band
+
+## Abstract
+A study of multi-column layouts containing both a top banner and a bottom footnote.
+
+## 1. Left Section
+Left column discussion.
+
+## 2. Right Section
+Right column discussion.
+
+* Institutional Review Board Approval #49281.
+"""
+    write_golden(os.path.join(matrix_golden_dir, "banner_with_footnote.page1.md"), golden_fn)
+    write_golden(os.path.join(matrix_golden_dir, "banner_with_footnote.doc.md"), f"<!-- page: 1 -->\n\n{golden_fn.strip()}")
+
+    # Sidebar variant
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text(fitz.Point(50, 50), "Banner Document with Sidebar", fontsize=16, fontname="helv")
+    page.insert_text(fitz.Point(50, 75), "Abstract", fontsize=12, fontname="helv")
+    r_abs = fitz.Rect(50, 85, 545, 120)
+    page.insert_textbox(r_abs, "A study of layouts featuring an explanatory sidebar alongside main text columns.", fontsize=9, fontname="times-roman")
+    r_left = fitz.Rect(50, 142, 340, 500)
+    page.insert_textbox(r_left, "1. Main Narrative\n\nThe primary technical content flows in the main section.", fontsize=9, fontname="times-roman")
+    r_right = fitz.Rect(380, 142, 545, 500)
+    page.insert_textbox(r_right, "Sidebar Note\n\nKey definitions and contextual remarks.", fontsize=9, fontname="times-roman")
+    doc.save(os.path.join(matrix_dir, "banner_with_sidebar.pdf"))
+    doc.close()
+    golden_sb = """# Banner Document with Sidebar
+
+## Abstract
+A study of layouts featuring an explanatory sidebar alongside main text columns.
+
+## 1. Main Narrative
+The primary technical content flows in the main section.
+
+Sidebar Note
+Key definitions and contextual remarks.
+"""
+    write_golden(os.path.join(matrix_golden_dir, "banner_with_sidebar.page1.md"), golden_sb)
+    write_golden(os.path.join(matrix_golden_dir, "banner_with_sidebar.doc.md"), f"<!-- page: 1 -->\n\n{golden_sb.strip()}")
+
+# ---------------------------------------------------------------------------
+# 5. three_column_banner.pdf
+# ---------------------------------------------------------------------------
+def make_three_column_banner():
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text(fitz.Point(50, 50), "Three-Column Journal Overview", fontsize=16, fontname="helv")
+    page.insert_text(fitz.Point(50, 75), "Abstract summary across all three columns.", fontsize=10, fontname="times-roman")
+    
+    col_w = 150
+    gap = 22
+    for i, title in enumerate(["Col 1 Alpha", "Col 2 Beta", "Col 3 Gamma"]):
+        left = 50 + i * (col_w + gap)
+        rect = fitz.Rect(left, 110, left + col_w, 400)
+        page.insert_textbox(rect, f"### {title}\n\nContent for {title} detailing technical progress.", fontsize=9, fontname="times-roman")
+    
+    doc.save(os.path.join(corpus_dir, "three_column_banner.pdf"))
+    doc.close()
+
+    golden = """# Three-Column Journal Overview
+
+Abstract summary across all three columns.
+
+### Col 1 Alpha
+
+Content for Col 1 Alpha detailing technical progress.
+
+### Col 2 Beta
+
+Content for Col 2 Beta detailing technical progress.
+
+### Col 3 Gamma
+
+Content for Col 3 Gamma detailing technical progress.
+"""
+    write_golden(os.path.join(golden_dir, "three_column_banner.page1.md"), golden)
+    write_golden(os.path.join(golden_dir, "three_column_banner.doc.md"), f"<!-- page: 1 -->\n\n{golden.strip()}")
+
+# ---------------------------------------------------------------------------
+# 6. digital_right_aligned_numbers_table.pdf
+# ---------------------------------------------------------------------------
+def make_right_aligned_table():
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text(fitz.Point(50, 60), "Quarterly Financial Performance", fontsize=16, fontname="helv")
+    page.insert_text(fitz.Point(50, 85), "Detailed ledger containing right-aligned numerical quantities.", fontsize=10, fontname="times-roman")
+
+    headers = ["Product Line", "Units Sold", "Unit Price", "Total Revenue"]
+    # Right-aligned x coordinates for numeric columns: col 1 left at 50, col 2 right at 260, col 3 right at 380, col 4 right at 540
+    data = [
+        ["Hardware Alpha", "1,420", "$15.50", "$22,010.00"],
+        ["Software Beta", "850", "$42.00", "$35,700.00"],
+        ["Services Gamma", "3,100", "$8.25", "$25,575.00"]
     ]
 
-    for r_idx, r_data in enumerate(rows):
-        curr_y = row_y[r_idx + 1]
-        for c_idx, val in enumerate(r_data):
-            if val:
-                page.insert_text(fitz.Point(col_x[c_idx] + 4, curr_y + 18), val, fontsize=9, fontname="times-roman")
+    col_x = [50, 180, 300, 420, 545]
+    row_y = [110, 135, 160, 185, 210]
+
+    for i, h in enumerate(headers):
+        page.insert_text(fitz.Point(col_x[i] + 5, 128), h, fontsize=9, fontname="helv")
+
+    for r_idx, row in enumerate(data):
+        y = row_y[r_idx + 1]
+        for c_idx, val in enumerate(row):
+            page.insert_text(fitz.Point(col_x[c_idx] + 5, y + 18), val, fontsize=9, fontname="times-roman")
 
     for y in row_y:
         page.draw_line(fitz.Point(50, y), fitz.Point(545, y), color=(0.7, 0.7, 0.7))
     for x in col_x:
-        page.draw_line(fitz.Point(x, 120), fitz.Point(x, 240), color=(0.7, 0.7, 0.7))
+        page.draw_line(fitz.Point(x, 110), fitz.Point(x, 210), color=(0.7, 0.7, 0.7))
 
-    page.insert_text(fitz.Point(50, 280), "Cluster health checks verified zero thermal throttling incidents during testing.", fontsize=10, fontname="times-roman")
-
-    doc.save(os.path.join(corpus_dir, "digital_table_multiword.pdf"))
+    doc.save(os.path.join(corpus_dir, "digital_right_aligned_numbers_table.pdf"))
     doc.close()
 
-    golden_md = """# Data Center Infrastructure Performance
+    golden = """# Quarterly Financial Performance
 
-Below is the infrastructure utilization summary recorded across compute clusters.
+Detailed ledger containing right-aligned numerical quantities.
 
-| Cluster Node | Cores Allocated | Memory Pool | Network IO | Operating Status |
-| --- | --- | --- | --- | --- |
-| Alpha Primary | 64 Cores | 256 GB | 12.8 Gbps | Online Active |
-| Beta Secondary | 32 Cores | | 8.4 Gbps | Standby Mode |
-| Gamma Worker | 128 Cores | 512 GB | 24.1 Gbps | Online Active |
-
-Cluster health checks verified zero thermal throttling incidents during testing.
-"""
-    with open(os.path.join(golden_dir, "digital_table_multiword.page1.md"), "w", encoding="utf-8") as f:
-        f.write(golden_md.strip() + "\n")
-
-# ---------------------------------------------------------------------------
-# 4. digital_multipage_table.pdf (E11: 3-page table continuation)
-# ---------------------------------------------------------------------------
-def make_multipage_table():
-    doc = fitz.open()
-    headers = ["Component ID", "Subsystem Category", "Fault Tolerance", "Telemetry Latency"]
-    col_x = [50, 160, 310, 430, 545]
-    
-    for p_num in range(3):
-        page = doc.new_page(width=595, height=842)
-        page.insert_text(fitz.Point(50, 60), f"System Architecture Telemetry (Part {p_num + 1})", fontsize=16, fontname="helv")
-        
-        # Header row on each page
-        row_y = 100
-        for i, h in enumerate(headers):
-            page.insert_text(fitz.Point(col_x[i] + 5, row_y + 18), h, fontsize=9, fontname="helv")
-        page.draw_line(fitz.Point(50, row_y), fitz.Point(545, row_y), color=(0.6, 0.6, 0.6))
-        page.draw_line(fitz.Point(50, row_y + 25), fitz.Point(545, row_y + 25), color=(0.6, 0.6, 0.6))
-        
-        # 4 rows per page
-        for r in range(4):
-            item_num = p_num * 4 + r + 1
-            curr_y = row_y + 25 + r * 25
-            row_data = [f"COMP-{item_num:03d}", "Kernel Dispatcher", "High Redundancy", f"{1.2 * item_num:.1f} ms"]
-            for i, val in enumerate(row_data):
-                page.insert_text(fitz.Point(col_x[i] + 5, curr_y + 18), val, fontsize=9, fontname="times-roman")
-            page.draw_line(fitz.Point(50, curr_y + 25), fitz.Point(545, curr_y + 25), color=(0.8, 0.8, 0.8))
-
-    doc.save(os.path.join(corpus_dir, "digital_multipage_table.pdf"))
-    doc.close()
-
-    golden_md = """# System Architecture Telemetry (Part 1)
-
-| Component ID | Subsystem Category | Fault Tolerance | Telemetry Latency |
+| Product Line | Units Sold | Unit Price | Total Revenue |
 | --- | --- | --- | --- |
-| COMP-001 | Kernel Dispatcher | High Redundancy | 1.2 ms |
-| COMP-002 | Kernel Dispatcher | High Redundancy | 2.4 ms |
-| COMP-003 | Kernel Dispatcher | High Redundancy | 3.6 ms |
-| COMP-004 | Kernel Dispatcher | High Redundancy | 4.8 ms |
+| Hardware Alpha | 1,420 | $15.50 | $22,010.00 |
+| Software Beta | 850 | $42.00 | $35,700.00 |
+| Services Gamma | 3,100 | $8.25 | $25,575.00 |
 """
-    with open(os.path.join(golden_dir, "digital_multipage_table.page1.md"), "w", encoding="utf-8") as f:
-        f.write(golden_md.strip() + "\n")
+    write_golden(os.path.join(golden_dir, "digital_right_aligned_numbers_table.page1.md"), golden)
+    write_golden(os.path.join(golden_dir, "digital_right_aligned_numbers_table.doc.md"), f"<!-- page: 1 -->\n\n{golden.strip()}")
 
 # ---------------------------------------------------------------------------
-# 5. question_bank_pages.pdf (E10: Question N headings + repeating footer)
+# 7. Negative Table Fixtures
 # ---------------------------------------------------------------------------
-def make_question_bank():
+def make_negative_table_fixtures():
+    # 1. address_block_two_row.pdf
+    doc1 = fitz.open()
+    page1 = doc1.new_page(width=595, height=842)
+    page1.insert_text(fitz.Point(50, 60), "Official Corporate Correspondence", fontsize=16, fontname="helv")
+    page1.insert_text(fitz.Point(50, 100), "Acme Corporation                     123 Industrial Parkway", fontsize=10, fontname="times-roman")
+    page1.insert_text(fitz.Point(50, 118), "Billing Operations                   Suite 400, Metro City", fontsize=10, fontname="times-roman")
+    page1.insert_text(fitz.Point(50, 160), "Please remit payment in accordance with the agreed schedule.", fontsize=10, fontname="times-roman")
+    doc1.save(os.path.join(corpus_dir, "address_block_two_row.pdf"))
+    doc1.close()
+    golden1 = """# Official Corporate Correspondence
+
+Acme Corporation 123 Industrial Parkway
+Billing Operations Suite 400, Metro City
+
+Please remit payment in accordance with the agreed schedule.
+"""
+    write_golden(os.path.join(golden_dir, "address_block_two_row.page1.md"), golden1)
+    write_golden(os.path.join(golden_dir, "address_block_two_row.doc.md"), f"<!-- page: 1 -->\n\n{golden1.strip()}")
+
+    # 2. signature_line.pdf
+    doc2 = fitz.open()
+    page2 = doc2.new_page(width=595, height=842)
+    page2.insert_text(fitz.Point(50, 60), "Contract Execution Acceptance", fontsize=16, fontname="helv")
+    page2.insert_text(fitz.Point(50, 100), "The undersigned hereby executes this agreement.", fontsize=10, fontname="times-roman")
+    page2.insert_text(fitz.Point(50, 140), "Name: ____________________       Date: ______________", fontsize=10, fontname="courier")
+    page2.insert_text(fitz.Point(50, 160), "Title: ___________________       Sign: ______________", fontsize=10, fontname="courier")
+    doc2.save(os.path.join(corpus_dir, "signature_line.pdf"))
+    doc2.close()
+    golden2 = """# Contract Execution Acceptance
+
+The undersigned hereby executes this agreement.
+
+Name: ____________________ Date: ______________
+Title: ___________________ Sign: ______________
+"""
+    write_golden(os.path.join(golden_dir, "signature_line.page1.md"), golden2)
+    write_golden(os.path.join(golden_dir, "signature_line.doc.md"), f"<!-- page: 1 -->\n\n{golden2.strip()}")
+
+    # 3. toc_dot_leaders.pdf
+    doc3 = fitz.open()
+    page3 = doc3.new_page(width=595, height=842)
+    page3.insert_text(fitz.Point(50, 60), "Table of Contents", fontsize=16, fontname="helv")
+    page3.insert_text(fitz.Point(50, 100), "Chapter 1: Theoretical Foundations .................................... 1", fontsize=10, fontname="courier")
+    page3.insert_text(fitz.Point(50, 120), "Chapter 2: System Architecture ....................................... 15", fontsize=10, fontname="courier")
+    page3.insert_text(fitz.Point(50, 140), "Chapter 3: Experimental Evaluation ................................... 42", fontsize=10, fontname="courier")
+    doc3.save(os.path.join(corpus_dir, "toc_dot_leaders.pdf"))
+    doc3.close()
+    golden3 = """# Table of Contents
+
+Chapter 1: Theoretical Foundations .................................... 1
+Chapter 2: System Architecture ....................................... 15
+Chapter 3: Experimental Evaluation ................................... 42
+"""
+    write_golden(os.path.join(golden_dir, "toc_dot_leaders.page1.md"), golden3)
+    write_golden(os.path.join(golden_dir, "toc_dot_leaders.doc.md"), f"<!-- page: 1 -->\n\n{golden3.strip()}")
+
+# ---------------------------------------------------------------------------
+# 8. question_bank_pages.pdf (5 pages x >= 12 non-empty lines, repeating footer)
+# ---------------------------------------------------------------------------
+def make_question_bank_5pages():
     doc = fitz.open()
-    questions = [
-        ("Question 1: Differential Equations", "Find the general solution to the second-order homogeneous differential equation y'' + 4y = 0."),
-        ("Question 2: Linear Algebra", "Determine the eigenvalues and corresponding eigenvectors for the matrix A = [[3, 1], [0, 2]]."),
-        ("Question 3: Multivariable Calculus", "Evaluate the surface integral of vector field F over the closed unit sphere centered at origin.")
+    topics = [
+        ("Question 1: Differential Equations", [
+            "Consider a second-order linear ordinary differential equation with constant coefficients.",
+            "Let y'' + 4y' + 5y = 0 subject to initial conditions y(0) = 1 and y'(0) = -2.",
+            "Part A: Determine the characteristic roots of the auxiliary algebraic equation.",
+            "Part B: Write the fundamental set of real-valued solutions using Euler's formula.",
+            "Part C: Apply the initial conditions to evaluate the arbitrary integration constants.",
+            "Part D: Analyze the long-term asymptotic behavior as t approaches infinity.",
+            "Part E: State whether the system is underdamped, critically damped, or overdamped.",
+            "Part F: Calculate the quasi-frequency of the decaying oscillatory response curve.",
+            "Part G: Sketch the phase portrait trajectory in the (y, y') coordinate state space.",
+            "Part H: Compute the Laplace transform of the inhomogeneous system with forcing function f(t) = exp(-t).",
+            "Part I: Find the steady-state transfer function poles and zeros.",
+            "Part J: Justify why uniqueness holds according to the Picard-Lindelof existence theorem."
+        ]),
+        ("Question 2: Linear Algebra and Matrix Theory", [
+            "Let A be a real symmetric matrix of order 4 with known trace and determinant.",
+            "Part A: Prove that all eigenvalues of matrix A are strictly real numbers.",
+            "Part B: Demonstrate that eigenvectors corresponding to distinct eigenvalues are mutually orthogonal.",
+            "Part C: Construct an orthonormal basis for R^4 using the Gram-Schmidt orthogonalization procedure.",
+            "Part D: Compute the spectral decomposition A = Q Lambda Q^T explicitly.",
+            "Part E: Evaluate the matrix exponential exp(At) using diagonalization techniques.",
+            "Part F: State the Cayley-Hamilton theorem and compute the characteristic polynomial p(lambda).",
+            "Part G: Express the inverse of matrix A as a linear combination of lower powers.",
+            "Part H: Determine whether the associated quadratic form x^T A x is positive definite.",
+            "Part I: Calculate the singular value decomposition (SVD) of the rank-deficient variant.",
+            "Part J: Compute the Moore-Penrose pseudoinverse for the minimum-norm least squares solution.",
+            "Part K: Derive the condition number kappa(A) under the Euclidean matrix 2-norm."
+        ]),
+        ("Question 3: Multivariable Calculus and Field Theory", [
+            "Let F(x, y, z) = (2xy + z^2) i + (x^2 + 2yz) j + (y^2 + 2xz) k be a three-dimensional vector field.",
+            "Part A: Compute the curl of vector field F and determine if F is irrotational everywhere.",
+            "Part B: Find a scalar potential function phi(x, y, z) such that F equals the gradient of phi.",
+            "Part C: Evaluate the line integral of F along a smooth path from (0,0,0) to (1,2,3).",
+            "Part D: State the fundamental theorem of line integrals and verify path independence.",
+            "Part E: Compute the divergence of F and find the locations of source or sink behavior.",
+            "Part F: Let S be the surface of the closed unit sphere centered at the coordinate origin.",
+            "Part G: Apply the Gauss Divergence Theorem to evaluate the net outward flux across S.",
+            "Part H: Compute the circulation along the boundary curve C bounding the upper hemisphere.",
+            "Part I: Verify Stokes' Theorem by directly calculating both the surface and contour integrals.",
+            "Part J: Formulate Green's Theorem as a two-dimensional special case in the xy-plane.",
+            "Part K: Determine the differential geometric curvature of the resulting streamline curves."
+        ]),
+        ("Question 4: Quantum Mechanics and Wave Equations", [
+            "Consider a quantum particle of mass m confined within an infinite one-dimensional square well potential.",
+            "Let the potential V(x) = 0 for 0 < x < L and V(x) = infinity elsewhere.",
+            "Part A: Write down the time-independent Schrodinger wave equation for the interior region.",
+            "Part B: Apply Dirichlet boundary conditions psi(0) = 0 and psi(L) = 0 to quantize energy levels.",
+            "Part C: Derive the normalized stationary state eigenfunctions psi_n(x).",
+            "Part D: Calculate the discrete quantized energy eigenvalues E_n as a function of quantum number n.",
+            "Part E: Formulate a general superposition state wave packet at initial time t = 0.",
+            "Part F: Determine the time evolution operator and evaluate the expectation value of position <x>.",
+            "Part G: Compute the momentum expectation value <p> and verify Ehrenfest's theorem.",
+            "Part H: Calculate the uncertainty product Delta x * Delta p and verify Heisenberg's principle.",
+            "Part I: Find the probability density current j(x, t) and verify probability conservation.",
+            "Part J: Discuss the parity symmetry properties of the eigenfunctions under coordinate inversion.",
+            "Part K: Analyze the tunneling transmission coefficient through a finite rectangular barrier."
+        ]),
+        ("Question 5: Electrodynamics and Wave Propagation", [
+            "Consider Maxwell's equations in linear isotropic homogeneous non-conducting dielectric media.",
+            "Part A: State the four microscopic Maxwell equations in differential vector form.",
+            "Part B: Derive the decoupled electromagnetic wave equations for fields E and B from curl equations.",
+            "Part C: Compute the propagation phase velocity v in terms of permittivity epsilon and permeability mu.",
+            "Part D: Formulate monochromatic plane wave solutions propagating along the positive z-axis.",
+            "Part E: Demonstrate the transverse electromagnetic (TEM) nature of free propagating plane waves.",
+            "Part F: Calculate the instantaneous and time-averaged Poynting vector S for energy flux density.",
+            "Part G: Determine the electromagnetic momentum density and radiation pressure on an absorbing surface.",
+            "Part H: Apply electromagnetic boundary conditions across a planar interface between two dielectric media.",
+            "Part I: Derive Fresnel's reflection and transmission coefficients for s-polarized (TE) incident waves.",
+            "Part J: Derive Fresnel's equations for p-polarized (TM) waves and compute Brewster's polarizing angle.",
+            "Part K: Determine the skin depth delta for wave penetration into a conducting metallic waveguide."
+        ])
     ]
-    for p_idx, (q_title, q_body) in enumerate(questions):
+
+    for p_idx, (title, lines) in enumerate(topics):
         page = doc.new_page(width=595, height=842)
-        # Top heading (Question N)
-        page.insert_text(fitz.Point(50, 80), q_title, fontsize=14, fontname="helv")
-        rect_body = fitz.Rect(50, 110, 545, 300)
-        page.insert_textbox(rect_body, q_body, fontsize=10, fontname="times-roman")
+        # Heading
+        page.insert_text(fitz.Point(50, 70), title, fontsize=14, fontname="helv")
         
-        # Repeating footer in bottom 7% (y > 780): Confidential notice + page number
-        page.draw_line(fitz.Point(50, 800), fitz.Point(545, 800), color=(0.7, 0.7, 0.7))
-        page.insert_text(fitz.Point(50, 815), f"Confidential — Examination Board Assessment Materials — Page {p_idx + 1}", fontsize=8, fontname="helv")
+        # 12 non-empty lines
+        for l_idx, line_text in enumerate(lines):
+            page.insert_text(fitz.Point(50, 110 + l_idx * 24), line_text, fontsize=9, fontname="times-roman")
+            
+        # Repeating footer in bottom 7% (y > 780 pt)
+        page.draw_line(fitz.Point(50, 790), fitz.Point(545, 790), color=(0.7, 0.7, 0.7))
+        page.insert_text(fitz.Point(50, 810), f"Confidential · Examination Board Assessment Materials · Page {p_idx + 1}", fontsize=8, fontname="helv")
 
     doc.save(os.path.join(corpus_dir, "question_bank_pages.pdf"))
     doc.close()
 
-    golden_md = """## Question 1: Differential Equations
+    # Page 1 golden (page tier - no cleaner, includes footer)
+    q1_title, q1_lines = topics[0]
+    page1_golden = f"## {q1_title}\n\n" + "\n".join(q1_lines) + "\n\nConfidential · Examination Board Assessment Materials · Page 1\n"
+    write_golden(os.path.join(golden_dir, "question_bank_pages.page1.md"), page1_golden)
 
-Find the general solution to the second-order homogeneous differential equation y'' + 4y = 0.
-"""
-    with open(os.path.join(golden_dir, "question_bank_pages.page1.md"), "w", encoding="utf-8") as f:
-        f.write(golden_md.strip() + "\n")
+    # Document golden (document tier - cleaner removes footers, assembler adds page markers)
+    doc_sections = []
+    for p_idx, (title, lines) in enumerate(topics):
+        body = "\n".join(lines)
+        doc_sections.append(f"<!-- page: {p_idx + 1} -->\n\n## {title}\n\n{body}")
+    doc_golden = "\n\n".join(doc_sections)
+    write_golden(os.path.join(golden_dir, "question_bank_pages.doc.md"), doc_golden)
 
 # ---------------------------------------------------------------------------
-# 6. digital_with_figures.pdf (E13: Figure box emission)
+# 9. digital_with_raster_figure.pdf (real embedded raster image)
 # ---------------------------------------------------------------------------
-def make_digital_with_figures():
+def make_digital_with_raster_figure():
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
-
     page.insert_text(fitz.Point(50, 60), "Deep Learning Document Understanding Pipeline", fontsize=16, fontname="helv")
     page.insert_text(fitz.Point(50, 90), "The architecture processes documents via unified layout analysis and vision extraction.", fontsize=10, fontname="times-roman")
 
-    # Insert a visual figure box
-    page.draw_rect(fitz.Rect(70, 120, 520, 300), color=(0.3, 0.3, 0.3), fill=(0.94, 0.94, 0.96))
-    page.insert_text(fitz.Point(180, 215), "[System Architecture Block Diagram]", fontsize=12, fontname="helv")
+    # Generate an image with PIL and embed it as a true raster image
+    img = Image.new("RGB", (800, 300), color=(240, 242, 245))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([10, 10, 790, 290], outline=(80, 80, 80), width=3)
+    draw.text((250, 130), "RASTER HARDWARE BLOCK DIAGRAM", fill=(40, 40, 40))
+    img_path = os.path.join(corpus_dir, "temp_fig.png")
+    img.save(img_path)
 
-    page.insert_text(fitz.Point(70, 320), "Figure 1: Architectural diagram of the neural ingestion pipeline.", fontsize=9, fontname="times-italic")
-    page.insert_text(fitz.Point(50, 360), "All tensor computations run locally on the neural accelerator.", fontsize=10, fontname="times-roman")
+    # Insert raster image into PDF
+    img_rect = fitz.Rect(50, 120, 545, 270)
+    page.insert_image(img_rect, filename=img_path)
+    if os.path.exists(img_path):
+        os.remove(img_path)
 
-    doc.save(os.path.join(corpus_dir, "digital_with_figures.pdf"))
+    page.insert_text(fitz.Point(50, 290), "Figure 1: Architectural diagram of the neural ingestion pipeline.", fontsize=9, fontname="times-italic")
+    page.insert_text(fitz.Point(50, 320), "All tensor computations run locally on the neural accelerator.", fontsize=10, fontname="times-roman")
+
+    doc.save(os.path.join(corpus_dir, "digital_with_raster_figure.pdf"))
     doc.close()
 
-    golden_md = """# Deep Learning Document Understanding Pipeline
+    golden = """# Deep Learning Document Understanding Pipeline
 
 The architecture processes documents via unified layout analysis and vision extraction.
 
@@ -303,119 +647,110 @@ The architecture processes documents via unified layout analysis and vision extr
 
 All tensor computations run locally on the neural accelerator.
 """
-    with open(os.path.join(golden_dir, "digital_with_figures.page1.md"), "w", encoding="utf-8") as f:
-        f.write(golden_md.strip() + "\n")
+    write_golden(os.path.join(golden_dir, "digital_with_raster_figure.page1.md"), golden)
+    write_golden(os.path.join(golden_dir, "digital_with_raster_figure.doc.md"), f"<!-- page: 1 -->\n\n{golden.strip()}")
 
 # ---------------------------------------------------------------------------
-# 7. scan_image_only.pdf (E17: TRUE raster scan with noise and skew via PIL)
+# 10. Multi-Page Fixtures: blank_middle_page & page_selection_sample
 # ---------------------------------------------------------------------------
-def make_scan_image_only():
-    # Render an image using PIL
-    img_w, img_h = 1200, 1600
-    img = Image.new("RGB", (img_w, img_h), color=(250, 249, 245))
-    draw = ImageDraw.Draw(img)
+def make_multipage_structural_fixtures():
+    # 1. blank_middle_page.pdf (3 pages: page 1 text, page 2 blank, page 3 text)
+    doc1 = fitz.open()
+    p1 = doc1.new_page(width=595, height=842)
+    p1.insert_text(fitz.Point(50, 100), "This is page 1 content of the multi-page report.", fontsize=12, fontname="times-roman")
+    # Page 2 is empty
+    doc1.new_page(width=595, height=842)
+    # Page 3
+    p3 = doc1.new_page(width=595, height=842)
+    p3.insert_text(fitz.Point(50, 100), "This is page 3 content of the multi-page report.", fontsize=12, fontname="times-roman")
+    doc1.save(os.path.join(corpus_dir, "blank_middle_page.pdf"))
+    doc1.close()
 
-    # Draw simulated text lines
-    draw.text((100, 120), "OFFICIAL LABORATORY INSPECTION REPORT", fill=(20, 20, 20))
-    draw.text((100, 180), "Facility Location: Analytical Research Facility Sector 7", fill=(40, 40, 40))
-    draw.text((100, 240), "Status: Verified Compliant under Biosafety Level 2 Standards", fill=(40, 40, 40))
-    draw.text((100, 320), "1. Ventilation and airflow mechanisms passed the pressure differential test.", fill=(30, 30, 30))
-    draw.text((100, 380), "2. Chemical containment storage cabinets were securely locked and labeled.", fill=(30, 30, 30))
-    draw.text((100, 440), "3. Emergency eyewash stations were flushed and operational.", fill=(30, 30, 30))
+    golden_blank = """<!-- page: 1 -->
 
-    # Add noise
-    for _ in range(5000):
-        nx = random.randint(0, img_w - 1)
-        ny = random.randint(0, img_h - 1)
-        val = random.randint(180, 240)
-        img.putpixel((nx, ny), (val, val, val))
+This is page 1 content of the multi-page report.
 
-    # Slight skew (rotate 0.6 degrees)
-    skewed = img.rotate(0.6, resample=Image.BICUBIC, expand=False, fillcolor=(250, 249, 245))
-    blurred = skewed.filter(ImageFilter.GaussianBlur(radius=0.4))
+<!-- page: 2 -->
+<!-- blank page -->
 
-    # Convert to PDF
-    pdf_path = os.path.join(corpus_dir, "scan_image_only.pdf")
-    blurred.save(pdf_path, "PDF", resolution=150.0)
+<!-- page: 3 -->
 
-    golden_md = """# OFFICIAL LABORATORY INSPECTION REPORT
-
-Facility Location: Analytical Research Facility Sector 7
-
-Status: Verified Compliant under Biosafety Level 2 Standards
-
-1. Ventilation and airflow mechanisms passed the pressure differential test.
-2. Chemical containment storage cabinets were securely locked and labeled.
-3. Emergency eyewash stations were flushed and operational.
+This is page 3 content of the multi-page report.
 """
-    with open(os.path.join(golden_dir, "scan_image_only.page1.md"), "w", encoding="utf-8") as f:
-        f.write(golden_md.strip() + "\n")
+    write_golden(os.path.join(golden_dir, "blank_middle_page.doc.md"), golden_blank)
 
-# ---------------------------------------------------------------------------
-# 8. scan_image_with_stamp.pdf (E13: Real raster scan + 60-char footer stamp)
-# ---------------------------------------------------------------------------
-def make_scan_image_with_stamp():
-    # Load the raster scan from scan_image_only.pdf and add a tiny digital footer
-    doc = fitz.open(os.path.join(corpus_dir, "scan_image_only.pdf"))
-    page = doc[0]
-    # Add a 60-char text footer
-    page.insert_text(fitz.Point(80, page.rect.height - 30), "RECORD ID: BATES-0049281-CONFIDENTIAL-DISTRICT-COURT-ARCHIVE", fontsize=7, fontname="courier")
-    doc.save(os.path.join(corpus_dir, "scan_image_with_stamp.pdf"))
-    doc.close()
+    # 2. page_selection_sample.pdf (5 pages)
+    doc2 = fitz.open()
+    for i in range(1, 6):
+        p = doc2.new_page(width=595, height=842)
+        p.insert_text(fitz.Point(50, 100), f"Section Content for Page Number {i}", fontsize=14, fontname="helv")
+        p.insert_text(fitz.Point(50, 130), f"This text is unique to page {i} of the comprehensive document.", fontsize=10, fontname="times-roman")
+    doc2.save(os.path.join(corpus_dir, "page_selection_sample.pdf"))
+    doc2.close()
 
-    golden_md = """# OFFICIAL LABORATORY INSPECTION REPORT
+    golden_sel = """<!-- page: 2 -->
 
-Facility Location: Analytical Research Facility Sector 7
+# Section Content for Page Number 2
 
-Status: Verified Compliant under Biosafety Level 2 Standards
+This text is unique to page 2 of the comprehensive document.
 
-1. Ventilation and airflow mechanisms passed the pressure differential test.
-2. Chemical containment storage cabinets were securely locked and labeled.
-3. Emergency eyewash stations were flushed and operational.
+<!-- page: 4 -->
+
+# Section Content for Page Number 4
+
+This text is unique to page 4 of the comprehensive document.
 """
-    with open(os.path.join(golden_dir, "scan_image_with_stamp.page1.md"), "w", encoding="utf-8") as f:
-        f.write(golden_md.strip() + "\n")
+    write_golden(os.path.join(golden_dir, "page_selection_sample.doc.md"), golden_sel)
 
 # ---------------------------------------------------------------------------
-# 9. rotated_page.pdf (E9: 90-degree rotated page)
+# 11. scan_raster_multipage.pdf (3 real raster pages with noise/skew)
 # ---------------------------------------------------------------------------
-def make_rotated_page():
+def make_scan_raster_multipage():
     doc = fitz.open()
-    page = doc.new_page(width=595, height=842)
-    page.insert_text(fitz.Point(80, 100), "Landscape Technical Specification Table", fontsize=16, fontname="helv")
-    page.insert_text(fitz.Point(80, 140), "This document was scanned in 90 degree clockwise rotation.", fontsize=11, fontname="times-roman")
-    page.set_rotation(90)
-    doc.save(os.path.join(corpus_dir, "rotated_page.pdf"))
+    for p_num in range(1, 4):
+        img_w, img_h = 1000, 1400
+        img = Image.new("RGB", (img_w, img_h), color=(252, 250, 245))
+        draw = ImageDraw.Draw(img)
+        draw.text((80, 100), f"SCANNED RECORD PAGE {p_num}", fill=(20, 20, 20))
+        draw.text((80, 150), f"Telemetry Reading Session {p_num * 100}", fill=(40, 40, 40))
+        for line_i in range(1, 8):
+            draw.text((80, 200 + line_i * 50), f"Record entry item {line_i}: sensor channel measurement within tolerance bounds.", fill=(35, 35, 35))
+        
+        # Noise
+        for _ in range(3000):
+            nx = random.randint(0, img_w - 1)
+            ny = random.randint(0, img_h - 1)
+            val = random.randint(180, 230)
+            img.putpixel((nx, ny), (val, val, val))
+        
+        skewed = img.rotate(0.4 if p_num % 2 == 1 else -0.4, resample=Image.BICUBIC, expand=False, fillcolor=(252, 250, 245))
+        blurred = skewed.filter(ImageFilter.GaussianBlur(radius=0.3))
+        
+        temp_img_path = os.path.join(corpus_dir, f"temp_raster_p{p_num}.png")
+        blurred.save(temp_img_path)
+        
+        p = doc.new_page(width=595, height=842)
+        p.insert_image(fitz.Rect(0, 0, 595, 842), filename=temp_img_path)
+        if os.path.exists(temp_img_path):
+            os.remove(temp_img_path)
+
+    doc.save(os.path.join(corpus_dir, "scan_raster_multipage.pdf"))
     doc.close()
 
-    golden_md = """# Landscape Technical Specification Table
+def main():
+    print("Generating comprehensive Round 3 corpus...")
+    make_nospace_kerning()
+    make_two_column_real()
+    make_article_2col()
+    make_banner_matrix()
+    make_three_column_banner()
+    make_right_aligned_table()
+    make_negative_table_fixtures()
+    make_question_bank_5pages()
+    make_digital_with_raster_figure()
+    make_multipage_structural_fixtures()
+    make_scan_raster_multipage()
+    print("Corpus generation complete.")
 
-This document was scanned in 90 degree clockwise rotation.
-"""
-    with open(os.path.join(golden_dir, "rotated_page.page1.md"), "w", encoding="utf-8") as f:
-        f.write(golden_md.strip() + "\n")
-
-# ---------------------------------------------------------------------------
-# 10. encrypted.pdf (E9: Password protected)
-# ---------------------------------------------------------------------------
-def make_encrypted():
-    doc = fitz.open()
-    page = doc.new_page(width=595, height=842)
-    page.insert_text(fitz.Point(50, 100), "Protected Executive Summary", fontsize=16, fontname="helv")
-    page.insert_text(fitz.Point(50, 140), "This document requires encryption password to decrypt.", fontsize=11, fontname="times-roman")
-    # Save with user password
-    doc.save(os.path.join(corpus_dir, "encrypted.pdf"), encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="markdrop123", owner_pw="adminpass")
-    doc.close()
-
-print("Generating extended corpus...")
-make_nospace_kerning()
-make_two_column_real()
-make_table_multiword()
-make_multipage_table()
-make_question_bank()
-make_digital_with_figures()
-make_scan_image_only()
-make_scan_image_with_stamp()
-make_rotated_page()
-make_encrypted()
-print("Extended corpus generated successfully.")
+if __name__ == "__main__":
+    main()
